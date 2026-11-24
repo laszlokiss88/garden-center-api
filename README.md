@@ -1,246 +1,190 @@
 # Garden Center API
 
-Garden Center API is the backend for a document-based knowledge assistant. It
-currently supports PDF upload, text extraction, token-aware chunking, and
-document lifecycle management, Ollama embeddings, and pgvector semantic search.
+Garden Center API is the backend of a flower-gardening knowledge assistant. It
+accepts text-based PDF guides, extracts and chunks their content, creates local
+Ollama embeddings, and retrieves relevant passages with PostgreSQL/pgvector.
 
-## Technology stack
+The current version implements document ingestion and semantic retrieval. It
+does **not** yet generate natural-language answers or run a LangGraph workflow;
+search results are the retrieved, source-attributed passages. See
+[Architecture](docs/architecture.md) for the design, trade-offs, and assignment
+gap analysis.
 
-- Python 3.14 (standard CPython)
-- FastAPI and Uvicorn
-- PostgreSQL 17 and pgvector
-- SQLAlchemy 2 (async), psycopg 3, and Alembic
-- pydantic-settings
-- PyMuPDF and tiktoken
-- Ollama with `nomic-embed-text` embeddings
-- uv dependency management
-- pytest, HTTPX, and Ruff
-- Docker and Docker Compose
+## Quick start
 
-## Prerequisites
-
-Install Docker Desktop on Windows 11 and enable its WSL 2 backend. No host
-installation of Python, pip, or uv is needed.
-
-## Development
-
-From PowerShell in the project directory, build and start the complete stack:
+Docker Desktop with Docker Compose is the only host prerequisite. From the
+repository root:
 
 ```powershell
 docker compose up --build -d
-```
-
-The API waits for PostgreSQL to become healthy and automatically runs
-`alembic upgrade head` before Uvicorn starts. The local `src` directory is
-mounted with hot reload enabled.
-
-- Health endpoint: <http://localhost:8000/health>
-- Readiness endpoint: <http://localhost:8000/ready>
-- Swagger UI: <http://localhost:8000/docs>
-
-`/health` is a simple process liveness check; `/ready` verifies database
-connectivity.
-
-### Ollama model setup
-
-Ollama starts with the stack, but models are not downloaded automatically.
-Pull the configured 768-dimensional embedding model once:
-
-```powershell
 docker compose exec ollama ollama pull nomic-embed-text
 docker compose exec ollama ollama list
 ```
 
-The model remains in the `ollama_models` Docker volume across restarts.
+Compose starts PostgreSQL 17 with pgvector, Ollama, and the API. The API waits
+for PostgreSQL, runs `alembic upgrade head`, and then starts Uvicorn. PostgreSQL
+data, uploaded PDFs, and Ollama models use persistent Docker volumes.
 
-## Document API
+Verify the services:
 
-After pulling the Ollama model, upload and synchronously process a PDF from
-PowerShell:
+```powershell
+curl.exe http://localhost:8000/health
+curl.exe http://localhost:8000/ready
+```
+
+- Swagger UI: <http://localhost:8000/docs>
+- `/health` is process liveness and does not access the database.
+- `/ready` verifies database connectivity.
+
+### Reproducible demo
+
+Upload the included, redistributable gardening handbook. Upload is synchronous:
+a `201 Created` response means extraction, chunking, embedding, and vector
+persistence all succeeded.
 
 ```powershell
 curl.exe -X POST http://localhost:8000/api/v1/documents `
-  -F "file=@C:\path\to\document.pdf;type=application/pdf"
+  -F "file=@sample_data/flower_gardening_handbook.pdf;type=application/pdf"
 ```
 
-List documents and retrieve one document with its extracted chunks:
+Save the returned `id`, then run a semantic search:
 
 ```powershell
-curl.exe http://localhost:8000/api/v1/documents
-curl.exe http://localhost:8000/api/v1/documents/{document-id}
+curl.exe -X POST http://localhost:8000/api/v1/search `
+  -H "Content-Type: application/json" `
+  -d '{"query":"How much sunlight do roses need?","top_k":5,"similarity_threshold":0.5}'
 ```
 
-Delete a document, its stored PDF, chunks, and related embeddings:
+Other useful demo queries:
 
-```powershell
-curl.exe -X DELETE http://localhost:8000/api/v1/documents/{document-id}
-```
+- `Why should bulb leaves remain after flowering?`
+- `Can I plant lilies where cats have access?`
+- `How should I water flower pots during summer?`
+- `How can I attract pollinators all season?`
+- `What should I do about yellow leaves?`
 
-Duplicate PDF content is rejected with HTTP 409 based on its SHA-256 hash.
-Uploaded PDFs are stored in the `document_uploads` Docker volume; only metadata
-and extracted chunks are stored in PostgreSQL.
+The search response contains the document ID, filename, page number, chunk
+index, text, and cosine similarity. It does not synthesize an answer. Queries
+outside the handbook, such as current shop prices or tomorrow's weather, should
+normally return no result when an appropriate similarity threshold is used.
 
-A `201 Created` upload response means extraction, chunking, Ollama embedding,
-and vector persistence all completed successfully, so the document is already
-searchable. Its processing status moves through `processing` to `completed`.
-If Ollama is unavailable, missing the model, times out, or returns invalid
-vectors, the request returns HTTP 503 and the persisted document is marked
-`failed` rather than incorrectly reported as completed. After fixing Ollama,
-retry the document through the manual indexing endpoint described below.
+## Processing and retrieval workflow
 
-### PDF limitations
+1. Validate the upload as a non-empty, text-based PDF within the configured
+   size limit.
+2. Store the original PDF in the `document_uploads` volume.
+3. Extract normalized text and page numbers with PyMuPDF.
+4. Split text deterministically with tiktoken, using configurable chunk size
+   and overlap.
+5. Persist document metadata and chunks in PostgreSQL.
+6. Generate `nomic-embed-text` vectors through Ollama in batches and persist
+   them with their provider, model, and dimensions.
+7. Embed search text in the same embedding space and order compatible chunks
+   by pgvector cosine distance.
 
-- Only files named `.pdf` with `Content-Type: application/pdf` are accepted.
-- The default maximum upload size is 10 MiB.
-- PDFs must contain extractable text. Scanned-image PDFs and OCR are not
-  supported.
-- Password-protected, malformed, and empty PDFs are rejected.
-- Processing is synchronous; background workers are intentionally out of scope.
+Embedding generation is idempotent. Searches cannot mix embeddings created by
+different provider/model/dimension combinations.
 
-### Configuration
+## API
 
-Copy `.env.example` to `.env` to override the Compose development defaults.
-
-| Variable | Default | Purpose |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | Compose PostgreSQL URL | Async SQLAlchemy connection URL |
-| `DOCUMENT_STORAGE_PATH` | `/data/uploads` | PDF storage inside the API container |
-| `MAX_UPLOAD_SIZE_BYTES` | `10485760` | Maximum accepted PDF size |
-| `CHUNK_SIZE_TOKENS` | `500` | Maximum tokens per chunk |
-| `CHUNK_OVERLAP_TOKENS` | `75` | Overlap between adjacent page chunks |
-| `OLLAMA_URL` | `http://ollama:11434` | Ollama API URL used by the API container |
-| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model identifier |
-| `EMBEDDING_DIMENSIONS` | `768` | Required model vector dimensions |
-| `EMBEDDING_BATCH_SIZE` | `32` | Chunks sent per Ollama request |
-| `OLLAMA_TIMEOUT_SECONDS` | `30` | Embedding request timeout |
-| `SEARCH_TOP_K` | `5` | Default maximum search results |
-| `SEARCH_SIMILARITY_THRESHOLD` | `0.5` | Default minimum cosine similarity |
+| `GET` | `/health` | API liveness |
+| `GET` | `/ready` | Database readiness |
+| `POST` | `/api/v1/documents` | Upload, process, and index a PDF |
+| `GET` | `/api/v1/documents?limit=20&offset=0` | Paginated document metadata |
+| `GET` | `/api/v1/documents/{id}` | Metadata and extracted chunks |
+| `DELETE` | `/api/v1/documents/{id}` | Delete PDF, chunks, and embeddings |
+| `POST` | `/api/v1/embeddings/index` | Index missing embeddings for all documents |
+| `POST` | `/api/v1/embeddings/index?document_id={id}` | Recover or reindex one document |
+| `POST` | `/api/v1/search` | Retrieve semantically similar chunks |
 
-## Embedding indexing and semantic search
+The upload response includes metadata, processing status, and chunk count, with
+a `Location` header for the detail endpoint. Duplicate PDF content is rejected
+with HTTP 409 using its SHA-256 hash. The document list returns `items`, `total`,
+`limit`, and `offset`; `limit` defaults to 20 and is capped at 100. PostgreSQL
+computes chunk counts without loading chunk text.
 
-Index all chunks that do not yet have an embedding for the configured model:
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/v1/embeddings/index
-```
-
-Index only one existing document:
+Manual recovery after a provider failure:
 
 ```powershell
 curl.exe -X POST "http://localhost:8000/api/v1/embeddings/index?document_id={document-id}"
 ```
 
-Repeated indexing is idempotent and reports already indexed chunks as skipped.
-It also recovers `failed` documents by embedding only their missing chunks and
-marking them `completed` after successful persistence.
-Search only considers embeddings whose provider, model, and dimensions match
-the configured provider:
+### PDF limitations
+
+- Filename extension and content type must identify a PDF.
+- Maximum upload size defaults to 10 MiB.
+- Scanned PDFs, OCR, encrypted PDFs, and background processing are unsupported.
+- A document is marked `failed` if Ollama indexing fails after persistence.
+
+## Configuration
+
+Copy the safe template only when overriding defaults:
 
 ```powershell
-curl.exe -X POST http://localhost:8000/api/v1/search `
-  -H "Content-Type: application/json" `
-  -d '{"query":"How often should roses be watered?","top_k":5,"similarity_threshold":0.5}'
+Copy-Item .env.example .env
 ```
 
-Each result includes the document ID, filename, source page, chunk index, text,
-and cosine similarity score.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `POSTGRES_DB` | `garden_center` | PostgreSQL database |
+| `POSTGRES_USER` | `garden_center` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | `garden_center` | Local development password |
+| `DATABASE_URL` | Compose PostgreSQL URL | SQLAlchemy/psycopg connection URL |
+| `DOCUMENT_STORAGE_PATH` | `/data/uploads` | PDF path inside the API container |
+| `MAX_UPLOAD_SIZE_BYTES` | `10485760` | Upload limit |
+| `CHUNK_SIZE_TOKENS` | `500` | Maximum tokens per chunk |
+| `CHUNK_OVERLAP_TOKENS` | `75` | Adjacent chunk overlap |
+| `OLLAMA_URL` | `http://ollama:11434` | Ollama endpoint |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
+| `EMBEDDING_DIMENSIONS` | `768` | Expected vector dimensions |
+| `EMBEDDING_BATCH_SIZE` | `32` | Texts per embedding request |
+| `OLLAMA_TIMEOUT_SECONDS` | `30` | Ollama request timeout |
+| `SEARCH_TOP_K` | `5` | Default result limit |
+| `SEARCH_SIMILARITY_THRESHOLD` | `0.5` | Default minimum similarity |
 
-### Real Ollama verification
+### Claude and Qwen3
 
-Automated tests inject a deterministic provider and do not require the model.
-After pulling it, verify the real endpoint separately from PowerShell:
+Claude/Qwen3 switching is **not implemented in the current codebase**. There is
+no generation-provider abstraction, Anthropic client, Qwen3 model configuration,
+or answer endpoint. Setting provider-related environment variables would have no
+effect. The only runtime model is the local Ollama `nomic-embed-text` embedding
+model. A future assignment phase would need to add a generation interface and
+both implementations before a configuration-only switch could be documented.
 
-```powershell
-$body = @{ model = "nomic-embed-text"; input = @("healthy tomato plants") } |
-  ConvertTo-Json
-$result = Invoke-RestMethod -Method Post `
-  -Uri http://localhost:11434/api/embed `
-  -ContentType "application/json" `
-  -Body $body
-$result.embeddings[0].Count
-```
+## Tests and quality checks
 
-The final command should output `768`. Then use the indexing and search commands
-above for an end-to-end application check.
-
-## Tests and code quality
-
-The full suite includes PostgreSQL integration tests, so keep Compose running:
+All Python commands run inside Docker. Automated tests use a deterministic fake
+embedding provider, so they do not require a downloaded Ollama model or paid
+service. Integration tests use the real Compose PostgreSQL database.
 
 ```powershell
 docker compose exec api python -m pytest
-```
-
-Run only database-independent unit tests:
-
-```powershell
 docker compose exec api python -m pytest -m "not integration"
-```
-
-Run lint and formatting checks:
-
-```powershell
 docker compose exec api ruff check .
 docker compose exec api ruff format --check .
 ```
 
-## Database migrations
+To verify real Ollama integration, pull the model, upload the sample PDF, and run
+the search request from the quick start.
 
-Apply all migrations manually when needed:
+## Operations
+
+Apply migrations manually if required:
 
 ```powershell
 docker compose exec api alembic upgrade head
 ```
 
-Create a migration after changing SQLAlchemy metadata:
-
-```powershell
-docker compose exec api alembic revision --autogenerate -m "describe change"
-```
-
-## Stopping the stack
-
-Stop containers while preserving database data, uploaded PDFs, and Ollama models:
+Stop services while retaining all data:
 
 ```powershell
 docker compose down
 ```
 
-To intentionally remove all persistent volumes:
+Delete services and persistent data intentionally:
 
 ```powershell
 docker compose down --volumes
 ```
-
-## Project structure
-
-```text
-garden-center-api/
-|-- src/garden_center/
-|   |-- config.py
-|   |-- database.py
-|   |-- document_processing.py
-|   |-- document_service.py
-|   |-- embeddings.py
-|   |-- search_service.py
-|   |-- models.py
-|   |-- schemas.py
-|   |-- main.py
-|   |-- routes/documents.py
-|   `-- routes/search.py
-|-- migrations/versions/
-|   |-- 20261124_01_enable_pgvector.py
-|   `-- 20261124_02_add_documents.py
-|-- tests/
-|-- alembic.ini
-|-- Dockerfile
-|-- compose.yaml
-|-- pyproject.toml
-|-- uv.lock
-`-- README.md
-```
-
-## Planned components
-
-Later phases may add RAG orchestration, answer generation, and LangGraph. Those
-features are intentionally outside Phase 4.

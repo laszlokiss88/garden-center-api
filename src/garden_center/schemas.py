@@ -39,6 +39,15 @@ class DocumentDetailResponse(DocumentResponse):
     chunks: list[DocumentChunkResponse]
 
 
+class DocumentListResponse(BaseModel):
+    """A page of document metadata."""
+
+    items: list[DocumentResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class ErrorDetail(BaseModel):
     """Machine-readable API error information."""
 

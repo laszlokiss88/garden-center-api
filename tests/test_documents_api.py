@@ -53,7 +53,33 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
 
             listing = await client.get("/api/v1/documents")
             assert listing.status_code == 200
-            assert document_id in {item["id"] for item in listing.json()}
+            listing_body = listing.json()
+            assert listing_body["limit"] == 20
+            assert listing_body["offset"] == 0
+            assert listing_body["total"] >= 1
+            listed = next(
+                item for item in listing_body["items"] if item["id"] == document_id
+            )
+            assert listed["chunk_count"] == body["chunk_count"]
+
+            first_page = await client.get(
+                "/api/v1/documents", params={"limit": 1, "offset": 0}
+            )
+            second_page = await client.get(
+                "/api/v1/documents", params={"limit": 1, "offset": 1}
+            )
+            assert len(first_page.json()["items"]) == 1
+            assert first_page.json()["total"] == second_page.json()["total"]
+            if second_page.json()["items"]:
+                assert (
+                    first_page.json()["items"][0]["id"]
+                    != second_page.json()["items"][0]["id"]
+                )
+
+            invalid_page = await client.get(
+                "/api/v1/documents", params={"limit": 101, "offset": -1}
+            )
+            assert invalid_page.status_code == 422
 
             detail = await client.get(f"/api/v1/documents/{document_id}")
             assert detail.status_code == 200

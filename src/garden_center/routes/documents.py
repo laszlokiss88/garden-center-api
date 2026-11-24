@@ -9,6 +9,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     Response,
     UploadFile,
     status,
@@ -32,6 +33,7 @@ from garden_center.models import Document
 from garden_center.schemas import (
     DocumentChunkResponse,
     DocumentDetailResponse,
+    DocumentListResponse,
     DocumentResponse,
     ErrorResponse,
 )
@@ -52,7 +54,9 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
     )
 
 
-def _document_response(document: Document) -> DocumentResponse:
+def _document_response(
+    document: Document, chunk_count: int | None = None
+) -> DocumentResponse:
     return DocumentResponse(
         id=document.id,
         filename=document.filename,
@@ -62,7 +66,7 @@ def _document_response(document: Document) -> DocumentResponse:
         processing_status=document.processing_status,
         created_at=document.created_at,
         updated_at=document.updated_at,
-        chunk_count=len(document.chunks),
+        chunk_count=len(document.chunks) if chunk_count is None else chunk_count,
     )
 
 
@@ -138,18 +142,30 @@ async def upload_document(
     return _document_response(document)
 
 
-@router.get("", response_model=list[DocumentResponse])
-async def get_documents(session: SessionDependency) -> list[DocumentResponse]:
-    """List uploaded documents newest first."""
+@router.get("", response_model=DocumentListResponse)
+async def get_documents(
+    session: SessionDependency,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DocumentListResponse:
+    """List uploaded documents newest first with offset pagination."""
     try:
-        documents = await list_documents(session)
+        documents, total = await list_documents(session, limit, offset)
     except SQLAlchemyError:
         raise _error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "Documents are temporarily unavailable.",
         ) from None
-    return [_document_response(document) for document in documents]
+    return DocumentListResponse(
+        items=[
+            _document_response(document, chunk_count)
+            for document, chunk_count in documents
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(

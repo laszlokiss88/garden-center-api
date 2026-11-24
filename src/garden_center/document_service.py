@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -113,14 +113,22 @@ async def create_document(
     return await get_document(session, document.id) or document
 
 
-async def list_documents(session: AsyncSession) -> list[Document]:
-    """Return documents newest first with their chunks loaded."""
-    result = await session.scalars(
-        select(Document)
-        .options(selectinload(Document.chunks))
+async def list_documents(
+    session: AsyncSession,
+    limit: int,
+    offset: int,
+) -> tuple[list[tuple[Document, int]], int]:
+    """Return one document page with database-computed chunk counts."""
+    total = await session.scalar(select(func.count()).select_from(Document))
+    result = await session.execute(
+        select(Document, func.count(DocumentChunk.id).label("chunk_count"))
+        .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
+        .group_by(Document.id)
         .order_by(Document.created_at.desc(), Document.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    return list(result.unique())
+    return [(document, chunk_count) for document, chunk_count in result], total or 0
 
 
 async def get_document(
