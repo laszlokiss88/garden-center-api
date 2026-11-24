@@ -1,0 +1,90 @@
+"""Pydantic response schemas for the document API."""
+
+import uuid
+from datetime import datetime
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+
+class DocumentChunkResponse(BaseModel):
+    """Persisted document chunk returned by the detail endpoint."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    chunk_index: int
+    text_content: str
+    source_page: int
+    token_count: int
+
+
+class DocumentResponse(BaseModel):
+    """Document metadata returned by create and list operations."""
+
+    id: uuid.UUID
+    filename: str
+    content_type: str
+    file_size: int
+    content_hash: str
+    processing_status: str
+    created_at: datetime
+    updated_at: datetime
+    chunk_count: int
+
+
+class DocumentDetailResponse(DocumentResponse):
+    """Document metadata together with extracted chunks."""
+
+    chunks: list[DocumentChunkResponse]
+
+
+class ErrorDetail(BaseModel):
+    """Machine-readable API error information."""
+
+    code: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    """Structured error response."""
+
+    detail: ErrorDetail
+
+
+class IndexResponse(BaseModel):
+    """Summary of an idempotent embedding indexing operation."""
+
+    provider: str
+    model: str
+    dimensions: int
+    indexed_chunks: int
+    skipped_chunks: int
+
+
+class SearchRequest(BaseModel):
+    """Semantic search parameters."""
+
+    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    top_k: int | None = Field(default=None, gt=0, le=100)
+    similarity_threshold: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class SearchResultResponse(BaseModel):
+    """A matching chunk with document source metadata."""
+
+    document_id: uuid.UUID
+    filename: str
+    page_number: int
+    chunk_index: int
+    text: str
+    similarity: float
+
+
+class SearchResponse(BaseModel):
+    """Semantic search results and the embedding space used."""
+
+    provider: str
+    model: str
+    dimensions: int
+    results: list[SearchResultResponse]
