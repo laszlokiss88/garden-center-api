@@ -12,7 +12,8 @@ flowchart LR
     API --> DS[Document service]
     DS --> PDF[PyMuPDF extraction]
     PDF --> Chunk[tiktoken chunking]
-    DS --> Files[(PDF Docker volume)]
+    DS --> Storage[FileStorage protocol]
+    Storage --> Files[(PDF Docker volume)]
     DS --> DB[(PostgreSQL 17 + pgvector)]
     API --> SS[Indexing and search service]
     SS --> EP[EmbeddingProvider protocol]
@@ -28,14 +29,17 @@ provider/model/dimensions, and uses pgvector cosine distance. Results retain the
 document ID, filename, source page, chunk index, and source text.
 
 The original PDF is stored in a persistent Docker volume rather than the
-database. PostgreSQL stores metadata, extracted chunks, lifecycle status, and
-embeddings. Foreign keys and ORM cascades remove chunks and embeddings with
-their parent document.
+database. PostgreSQL stores its provider-generated storage key alongside the
+metadata, extracted chunks, lifecycle status, and embeddings. Foreign keys and
+ORM cascades remove chunks and embeddings with their parent document.
 
 ## Layering and provider boundaries
 
 - `routes/` owns HTTP validation, status codes, and response schemas.
 - `document_service.py` coordinates persistence and file lifecycle.
+- `file_storage.py` generates provider-owned storage keys and isolates generic
+  filesystem access behind the small `FileStorage` protocol. The document
+  service supplies only the logical directory, media type, and extension.
 - `document_processing.py` contains persistence-independent PDF extraction and
   chunking.
 - `search_service.py` owns automatic upload indexing and semantic retrieval.
@@ -142,9 +146,11 @@ Indexing is part of the synchronous upload flow. A successful `201` therefore
 means all chunks have persisted embeddings. Any later processing, provider, or
 embedding-persistence failure deletes the document and its cascaded chunks and
 vectors, then removes the uploaded file so the same content can be retried.
-Upload storage uses a temporary file and atomic replace. The unique content hash
-constraint prevents duplicate documents, including concurrent identical
-uploads.
+Local file storage writes a temporary file and uses `os.replace` to publish
+each file atomically within the same filesystem. The database and filesystem do
+not form one atomic transaction, so explicit cleanup handles failures between
+those steps. The unique content hash constraint prevents duplicate documents,
+including concurrent identical uploads.
 
 The liveness endpoint deliberately ignores dependencies. Readiness checks
 PostgreSQL only; it does not currently verify Ollama or model installation.

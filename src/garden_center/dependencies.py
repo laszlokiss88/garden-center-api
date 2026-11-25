@@ -7,6 +7,14 @@ from fastapi import Depends
 
 from garden_center.config import Settings, get_settings
 from garden_center.embeddings import EmbeddingProvider, OllamaEmbeddingProvider
+from garden_center.file_storage import FileStorage, LocalFileStorage
+
+
+def get_file_storage(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> FileStorage:
+    """Build local file storage from application settings."""
+    return LocalFileStorage(settings.document_storage_path)
 
 
 async def get_embedding_provider(

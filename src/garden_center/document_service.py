@@ -3,9 +3,7 @@
 import asyncio
 import hashlib
 import logging
-import os
 import uuid
-from pathlib import Path
 
 from fastapi import UploadFile
 from sqlalchemy import func, select
@@ -20,6 +18,7 @@ from garden_center.document_processing import (
     extract_pdf_pages,
     validate_upload,
 )
+from garden_center.file_storage import FileStorage
 from garden_center.models import Document, DocumentChunk, ProcessingStatus
 
 logger = logging.getLogger(__name__)
@@ -43,29 +42,26 @@ def _process_document(content: bytes, settings: Settings):
     )
 
 
-def _document_path(storage_path: Path, document_id: uuid.UUID) -> Path:
-    return storage_path / f"{document_id}.pdf"
-
-
-def _store_file(storage_path: Path, document_id: uuid.UUID, content: bytes) -> Path:
-    storage_path.mkdir(parents=True, exist_ok=True)
-    destination = _document_path(storage_path, document_id)
-    temporary = destination.with_suffix(".pdf.tmp")
+async def _delete_after_failed_persistence(
+    storage: FileStorage, storage_key: str
+) -> None:
+    """Cleanup that preserves the original database error."""
     try:
-        temporary.write_bytes(content)
-        os.replace(temporary, destination)
+        await storage.delete(storage_key)
     except OSError:
-        temporary.unlink(missing_ok=True)
-        raise
-    return destination
+        logger.exception(
+            "Could not remove stored file after database persistence failure: %s",
+            storage_key,
+        )
 
 
 async def create_document(
     session: AsyncSession,
     upload: UploadFile,
     settings: Settings,
+    storage: FileStorage,
 ) -> Document:
-    """Validate, extract, chunk, store, and persist one PDF atomically."""
+    """Validate, process, store, and persist one PDF with failure cleanup."""
     content = await upload.read(settings.max_upload_size_bytes + 1)
     validate_upload(
         upload.filename,
@@ -82,12 +78,19 @@ async def create_document(
     if existing_id is not None:
         raise DuplicateDocumentError("This PDF has already been uploaded.")
 
+    stored_file = await storage.upload(
+        content=content,
+        content_type=PDF_CONTENT_TYPE,
+        directory="documents",
+        extension=".pdf",
+    )
     document = Document(
         id=uuid.uuid4(),
         filename=upload.filename or "document.pdf",
         content_type=PDF_CONTENT_TYPE,
         file_size=len(content),
         content_hash=content_hash,
+        storage_key=stored_file.storage_key,
         processing_status=ProcessingStatus.PROCESSING,
         chunks=[
             DocumentChunk(
@@ -99,25 +102,21 @@ async def create_document(
             for chunk in chunks
         ],
     )
-    destination = await asyncio.to_thread(
-        _store_file, settings.document_storage_path, document.id, content
-    )
     session.add(document)
 
     try:
         await session.commit()
-        await session.refresh(document)
     except IntegrityError as exc:
         await session.rollback()
-        await asyncio.to_thread(destination.unlink, missing_ok=True)
+        await _delete_after_failed_persistence(storage, document.storage_key)
         if getattr(exc.orig, "sqlstate", None) == "23505":
             raise DuplicateDocumentError("This PDF has already been uploaded.") from exc
         raise
     except Exception:
         await session.rollback()
-        await asyncio.to_thread(destination.unlink, missing_ok=True)
         raise
 
+    await session.refresh(document)
     logger.info("Processed document %s with %d chunks", document.id, len(chunks))
     return await get_document(session, document.id) or document
 
@@ -154,7 +153,7 @@ async def get_document(
 async def delete_document(
     session: AsyncSession,
     document: Document,
-    settings: Settings,
+    storage: FileStorage,
 ) -> None:
     """Delete database data first, then remove the stored PDF."""
     await session.delete(document)
@@ -164,8 +163,11 @@ async def delete_document(
         await session.rollback()
         raise
 
-    path = _document_path(settings.document_storage_path, document.id)
     try:
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+        await storage.delete(document.storage_key)
     except OSError:
-        logger.exception("Could not remove stored PDF for document %s", document.id)
+        logger.exception(
+            "Could not remove stored file for deleted document %s: %s",
+            document.id,
+            document.storage_key,
+        )

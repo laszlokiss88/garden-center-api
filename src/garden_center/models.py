@@ -44,6 +44,7 @@ class Document(Base):
             "processing_status IN ('processing', 'completed')",
             name="ck_documents_processing_status",
         ),
+        UniqueConstraint("storage_key", name="uq_documents_storage_key"),
         Index("ix_documents_created_at", "created_at"),
     )
 
@@ -52,6 +53,7 @@ class Document(Base):
     content_type: Mapped[str] = mapped_column(String(100))
     file_size: Mapped[int] = mapped_column(BigInteger)
     content_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    storage_key: Mapped[str] = mapped_column(String(500))
     processing_status: Mapped[str] = mapped_column(
         String(20), default=ProcessingStatus.PROCESSING
     )

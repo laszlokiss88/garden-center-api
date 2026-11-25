@@ -45,6 +45,7 @@ def test_search_returns_source_metadata() -> None:
             content_type="application/pdf",
             file_size=100,
             content_hash=hashlib.sha256(document_id.bytes).hexdigest(),
+            storage_key=f"documents/{document_id}.pdf",
             processing_status=ProcessingStatus.COMPLETED,
             chunks=[
                 DocumentChunk(

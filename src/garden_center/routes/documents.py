@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from garden_center.config import Settings, get_settings
 from garden_center.database import get_database_session
-from garden_center.dependencies import get_embedding_provider
+from garden_center.dependencies import get_embedding_provider, get_file_storage
 from garden_center.document_processing import DocumentValidationError
 from garden_center.document_service import (
     DuplicateDocumentError,
@@ -29,6 +29,7 @@ from garden_center.document_service import (
     list_documents,
 )
 from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
+from garden_center.file_storage import FileStorage
 from garden_center.models import Document
 from garden_center.schemas import (
     DocumentChunkResponse,
@@ -45,6 +46,7 @@ _DOCUMENT_STORAGE_ERRORS = (SQLAlchemyError, OSError)
 SessionDependency = Annotated[AsyncSession, Depends(get_database_session)]
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
 ProviderDependency = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
+StorageDependency = Annotated[FileStorage, Depends(get_file_storage)]
 
 
 def _error(status_code: int, code: str, message: str) -> HTTPException:
@@ -83,13 +85,13 @@ def _document_detail(document: Document) -> DocumentDetailResponse:
 async def _cleanup_failed_upload(
     session: AsyncSession,
     document_id: uuid.UUID,
-    settings: Settings,
+    storage: FileStorage,
 ) -> None:
     """Remove all persisted artifacts for an upload that did not finish."""
     try:
         document = await get_document(session, document_id)
         if document is not None:
-            await delete_document(session, document, settings)
+            await delete_document(session, document, storage)
     except SQLAlchemyError:
         logger.exception("Could not clean up failed document %s", document_id)
         raise _error(
@@ -113,13 +115,14 @@ async def upload_document(
     session: SessionDependency,
     settings: SettingsDependency,
     provider: ProviderDependency,
+    storage: StorageDependency,
     response: Response,
     file: Annotated[UploadFile, File(description="PDF document")],
 ) -> DocumentResponse:
     """Upload, extract, chunk, and persist a PDF."""
     try:
         try:
-            document = await create_document(session, file, settings)
+            document = await create_document(session, file, settings, storage)
             document_id = document.id
         except DocumentValidationError as exc:
             raise _error(status.HTTP_400_BAD_REQUEST, exc.code, exc.message) from exc
@@ -148,7 +151,7 @@ async def upload_document(
             document = indexed_document
         except EmbeddingProviderError as exc:
             logger.warning("Document %s indexing failed: %s", document_id, exc.code)
-            await _cleanup_failed_upload(session, document_id, settings)
+            await _cleanup_failed_upload(session, document_id, storage)
             raise _error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 exc.code,
@@ -156,7 +159,7 @@ async def upload_document(
             ) from exc
         except SQLAlchemyError:
             logger.exception("Document %s embedding persistence failed", document_id)
-            await _cleanup_failed_upload(session, document_id, settings)
+            await _cleanup_failed_upload(session, document_id, storage)
             raise _error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "database_unavailable",
@@ -178,6 +181,7 @@ async def get_documents(
     try:
         documents, total = await list_documents(session, limit, offset)
     except SQLAlchemyError:
+        logger.exception("Could not list documents")
         raise _error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
@@ -206,6 +210,7 @@ async def get_document_detail(
     try:
         document = await get_document(session, document_id)
     except SQLAlchemyError:
+        logger.exception("Could not load document %s", document_id)
         raise _error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
@@ -220,12 +225,13 @@ async def get_document_detail(
 async def remove_document(
     document_id: uuid.UUID,
     session: SessionDependency,
-    settings: SettingsDependency,
+    storage: StorageDependency,
 ) -> None:
     """Delete a document, its chunks and embeddings, and its stored PDF."""
     try:
         document = await get_document(session, document_id)
     except SQLAlchemyError:
+        logger.exception("Could not load document %s for deletion", document_id)
         raise _error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
@@ -234,8 +240,9 @@ async def remove_document(
     if document is None:
         raise _error(status.HTTP_404_NOT_FOUND, "document_not_found", "Not found.")
     try:
-        await delete_document(session, document, settings)
+        await delete_document(session, document, storage)
     except SQLAlchemyError:
+        logger.exception("Could not delete document %s", document_id)
         raise _error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",

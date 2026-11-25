@@ -1,13 +1,10 @@
 """Embedding provider abstraction and Ollama implementation."""
 
-import logging
 import math
 from collections.abc import Sequence
 from typing import Protocol
 
 import httpx
-
-logger = logging.getLogger(__name__)
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -69,13 +66,11 @@ class OllamaEmbeddingProvider:
                 json={"model": self.model, "input": list(texts)},
             )
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            logger.warning("Ollama embedding request failed: %s", exc)
             raise EmbeddingProviderError(
                 "ollama_unavailable",
                 "Ollama is unavailable or the embedding request timed out.",
             ) from exc
         except httpx.HTTPError as exc:
-            logger.warning("Ollama embedding HTTP error: %s", exc)
             raise EmbeddingProviderError(
                 "ollama_request_failed", "The Ollama embedding request failed."
             ) from exc
@@ -86,9 +81,6 @@ class OllamaEmbeddingProvider:
                 f"Ollama model '{self.model}' is not installed.",
             )
         if response.is_error:
-            logger.warning(
-                "Ollama returned HTTP %d: %s", response.status_code, response.text
-            )
             raise EmbeddingProviderError(
                 "ollama_request_failed",
                 f"Ollama returned HTTP {response.status_code}.",
@@ -101,7 +93,6 @@ class OllamaEmbeddingProvider:
                 raise ValueError("unexpected embedding count")
             validated = [self._validate_vector(vector) for vector in embeddings]
         except (KeyError, TypeError, ValueError) as exc:
-            logger.warning("Ollama returned an invalid embedding response")
             raise EmbeddingProviderError(
                 "invalid_embedding_response",
                 "Ollama returned an invalid embedding response.",

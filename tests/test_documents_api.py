@@ -56,7 +56,15 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
             assert "chunks" not in body
             assert created.headers["location"] == f"/api/v1/documents/{document_id}"
 
-            stored_path = get_settings().document_storage_path / f"{document_id}.pdf"
+            async with async_session_factory() as session:
+                storage_key = await session.scalar(
+                    select(Document.storage_key).where(
+                        Document.id == uuid.UUID(document_id)
+                    )
+                )
+            assert storage_key is not None
+            assert storage_key.startswith("documents/")
+            stored_path = get_settings().document_storage_path / storage_key
             assert stored_path.exists()
 
             duplicate = await client.post(
@@ -98,7 +106,7 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
 
             detail = await client.get(f"/api/v1/documents/{document_id}")
             assert detail.status_code == 200
-            assert detail.json()["filename"] == "garden.pdf"
+            assert detail.json()["filename"] == body["filename"]
             assert [chunk["source_page"] for chunk in detail.json()["chunks"]] == [1, 2]
 
             async with async_session_factory() as session:
@@ -161,7 +169,7 @@ def test_failed_upload_is_cleaned_up_and_can_be_retried() -> None:
         pdf = make_pdf([f"Indexing failure retry {uuid.uuid4()}"])
         content_hash = hashlib.sha256(pdf).hexdigest()
         storage_path = get_settings().document_storage_path
-        files_before = set(storage_path.glob("*.pdf"))
+        files_before = set(storage_path.rglob("*.pdf"))
         transport = ASGITransport(app=app)
         app.dependency_overrides[get_embedding_provider] = FailingEmbeddingProvider
 
@@ -197,7 +205,7 @@ def test_failed_upload_is_cleaned_up_and_can_be_retried() -> None:
                         .where(Document.content_hash == content_hash)
                     )
                     assert (document_count, chunk_count, embedding_count) == (0, 0, 0)
-                assert set(storage_path.glob("*.pdf")) == files_before
+                assert set(storage_path.rglob("*.pdf")) == files_before
 
                 app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
                 retried = await client.post(

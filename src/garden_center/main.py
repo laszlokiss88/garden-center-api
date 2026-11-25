@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from garden_center.database import check_database_connection, dispose_database
 from garden_center.routes.documents import router as documents_router
 from garden_center.routes.search import router as search_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager
