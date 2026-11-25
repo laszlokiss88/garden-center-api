@@ -73,14 +73,35 @@ def normalize_text(text: str) -> str:
     return normalized.strip()
 
 
-def extract_pdf_pages(content: bytes) -> list[ExtractedPage]:
+def extract_pdf_pages(
+    content: bytes,
+    max_pages: int | None = None,
+    max_characters: int | None = None,
+) -> list[ExtractedPage]:
     """Extract normalized text with one-based page references."""
     try:
         with pymupdf.open(stream=content, filetype="pdf") as pdf:
-            pages = [
-                ExtractedPage(page.number + 1, normalize_text(page.get_text("text")))
-                for page in pdf
-            ]
+            if max_pages is not None and len(pdf) > max_pages:
+                raise DocumentValidationError(
+                    "too_many_pages",
+                    f"The PDF exceeds the {max_pages}-page limit.",
+                )
+            pages = []
+            extracted_characters = 0
+            for page in pdf:
+                extracted = ExtractedPage(
+                    page.number + 1, normalize_text(page.get_text("text"))
+                )
+                extracted_characters += len(extracted.text)
+                if max_characters is not None and extracted_characters > max_characters:
+                    raise DocumentValidationError(
+                        "too_much_text",
+                        f"The PDF exceeds the {max_characters}-character "
+                        "extraction limit.",
+                    )
+                pages.append(extracted)
+    except DocumentValidationError:
+        raise
     except (pymupdf.FileDataError, RuntimeError, ValueError) as exc:
         raise DocumentValidationError(
             "malformed_pdf", "The PDF is malformed or cannot be read."

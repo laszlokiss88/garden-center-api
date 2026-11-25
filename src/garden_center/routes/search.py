@@ -1,7 +1,6 @@
 """HTTP routes for embedding indexing and semantic search."""
 
 import logging
-import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,12 +13,11 @@ from garden_center.dependencies import get_embedding_provider
 from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
 from garden_center.schemas import (
     ErrorResponse,
-    IndexResponse,
     SearchRequest,
     SearchResponse,
     SearchResultResponse,
 )
-from garden_center.search_service import index_document_chunks, semantic_search
+from garden_center.search_service import semantic_search
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["semantic-search"])
@@ -33,45 +31,6 @@ def _provider_error(exc: EmbeddingProviderError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"code": exc.code, "message": exc.message},
-    )
-
-
-@router.post(
-    "/embeddings/index",
-    response_model=IndexResponse,
-    responses={503: {"model": ErrorResponse}},
-)
-async def index_embeddings(
-    session: SessionDependency,
-    settings: SettingsDependency,
-    provider: ProviderDependency,
-    document_id: uuid.UUID | None = None,
-) -> IndexResponse:
-    """Generate missing embeddings for one document or all documents."""
-    try:
-        result = await index_document_chunks(
-            session,
-            provider,
-            settings.embedding_batch_size,
-            document_id,
-        )
-    except EmbeddingProviderError as exc:
-        raise _provider_error(exc) from exc
-    except SQLAlchemyError:
-        logger.exception("Embedding persistence failed")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "database_unavailable",
-                "message": "Embeddings could not be persisted.",
-            },
-        ) from None
-    return IndexResponse(
-        provider=provider.provider_name,
-        model=provider.model,
-        dimensions=provider.dimensions,
-        indexed_chunks=result.indexed_chunks,
-        skipped_chunks=result.skipped_chunks,
     )
 
 

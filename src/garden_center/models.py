@@ -32,7 +32,6 @@ class ProcessingStatus(StrEnum):
 
     PROCESSING = "processing"
     COMPLETED = "completed"
-    FAILED = "failed"
 
 
 class Document(Base):
@@ -42,7 +41,7 @@ class Document(Base):
     __table_args__ = (
         CheckConstraint("file_size > 0", name="ck_documents_file_size_positive"),
         CheckConstraint(
-            "processing_status IN ('processing', 'completed', 'failed')",
+            "processing_status IN ('processing', 'completed')",
             name="ck_documents_processing_status",
         ),
         Index("ix_documents_created_at", "created_at"),
@@ -111,6 +110,7 @@ class ChunkEmbedding(Base):
             "chunk_id",
             "embedding_provider",
             "embedding_model",
+            "embedding_dimensions",
             name="uq_chunk_embeddings_chunk_model",
         ),
         CheckConstraint(

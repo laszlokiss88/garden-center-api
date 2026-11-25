@@ -13,7 +13,12 @@ from garden_center.database import async_session_factory
 from garden_center.dependencies import get_embedding_provider
 from garden_center.embeddings import EmbeddingProviderError, OllamaEmbeddingProvider
 from garden_center.main import app
-from garden_center.models import Document, DocumentChunk, ProcessingStatus
+from garden_center.models import (
+    ChunkEmbedding,
+    Document,
+    DocumentChunk,
+    ProcessingStatus,
+)
 from tests.fakes import FakeEmbeddingProvider
 
 
@@ -30,9 +35,10 @@ def _connection_failure(request: httpx.Request) -> NoReturn:
 
 
 @pytest.mark.integration
-def test_indexing_is_idempotent_and_search_returns_source_metadata() -> None:
+def test_search_returns_source_metadata() -> None:
     async def scenario() -> None:
         document_id = uuid.uuid4()
+        provider = FakeEmbeddingProvider()
         document = Document(
             id=document_id,
             filename="search.pdf",
@@ -42,16 +48,34 @@ def test_indexing_is_idempotent_and_search_returns_source_metadata() -> None:
             processing_status=ProcessingStatus.COMPLETED,
             chunks=[
                 DocumentChunk(
+                    id=uuid.uuid4(),
                     chunk_index=0,
                     text_content="Roses need regular watering.",
                     source_page=1,
                     token_count=6,
+                    embeddings=[
+                        ChunkEmbedding(
+                            embedding_provider=provider.provider_name,
+                            embedding_model=provider.model,
+                            embedding_dimensions=provider.dimensions,
+                            vector_data=[1.0, 0.0, 0.0],
+                        )
+                    ],
                 ),
                 DocumentChunk(
+                    id=uuid.uuid4(),
                     chunk_index=1,
                     text_content="Healthy soil contains organic matter.",
                     source_page=2,
                     token_count=6,
+                    embeddings=[
+                        ChunkEmbedding(
+                            embedding_provider=provider.provider_name,
+                            embedding_model=provider.model,
+                            embedding_dimensions=provider.dimensions,
+                            vector_data=[0.0, 1.0, 0.0],
+                        )
+                    ],
                 ),
             ],
         )
@@ -59,7 +83,6 @@ def test_indexing_is_idempotent_and_search_returns_source_metadata() -> None:
             session.add(document)
             await session.commit()
 
-        provider = FakeEmbeddingProvider()
         app.dependency_overrides[get_embedding_provider] = lambda: provider
         transport = ASGITransport(app=app)
         try:
@@ -67,20 +90,6 @@ def test_indexing_is_idempotent_and_search_returns_source_metadata() -> None:
                 transport=transport,
                 base_url="http://testserver",
             ) as client:
-                indexed = await client.post(
-                    "/api/v1/embeddings/index",
-                    params={"document_id": str(document_id)},
-                )
-                assert indexed.status_code == 200, indexed.text
-                assert indexed.json()["indexed_chunks"] == 2
-
-                repeated = await client.post(
-                    "/api/v1/embeddings/index",
-                    params={"document_id": str(document_id)},
-                )
-                assert repeated.json()["indexed_chunks"] == 0
-                assert repeated.json()["skipped_chunks"] == 2
-
                 search = await client.post(
                     "/api/v1/search",
                     json={"query": "rose care", "similarity_threshold": 0.5},
@@ -133,8 +142,11 @@ def test_ollama_provider_failures(
             dimensions=3,
             transport=httpx.MockTransport(handler),
         )
-        with pytest.raises(EmbeddingProviderError) as error:
-            await provider.embed(["text"])
-        assert error.value.code == expected_code
+        try:
+            with pytest.raises(EmbeddingProviderError) as error:
+                await provider.embed(["text"])
+            assert error.value.code == expected_code
+        finally:
+            await provider.aclose()
 
     asyncio.run(scenario())

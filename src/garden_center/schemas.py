@@ -61,20 +61,13 @@ class ErrorResponse(BaseModel):
     detail: ErrorDetail
 
 
-class IndexResponse(BaseModel):
-    """Summary of an idempotent embedding indexing operation."""
-
-    provider: str
-    model: str
-    dimensions: int
-    indexed_chunks: int
-    skipped_chunks: int
-
-
 class SearchRequest(BaseModel):
     """Semantic search parameters."""
 
-    query: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    query: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
+    ]
     top_k: int | None = Field(default=None, gt=0, le=100)
     similarity_threshold: float | None = Field(default=None, ge=-1.0, le=1.0)
 

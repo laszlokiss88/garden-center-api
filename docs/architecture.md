@@ -38,7 +38,7 @@ their parent document.
 - `document_service.py` coordinates persistence and file lifecycle.
 - `document_processing.py` contains persistence-independent PDF extraction and
   chunking.
-- `search_service.py` owns idempotent indexing and semantic retrieval.
+- `search_service.py` owns automatic upload indexing and semantic retrieval.
 - `embeddings.py` defines the `EmbeddingProvider` protocol and isolates Ollama
   HTTP behavior.
 - `models.py` and `database.py` own SQLAlchemy models, async sessions, and engine
@@ -103,11 +103,11 @@ are async. A fresh database session is injected per request, and request data is
 not kept in shared mutable application state. The SQLAlchemy engine owns a
 connection pool and is disposed during application shutdown.
 
-PDF extraction, tokenization, and local file operations are potential blocking
-or CPU-heavy work. File writes are moved to a thread, but extraction and
-chunking currently run in the request process. Ollama is the likely throughput
-bottleneck, and synchronous uploads can occupy API capacity for their full
-duration.
+PDF extraction, tokenization, and local file operations are blocking or
+CPU-heavy work and are moved to a bounded thread-pool operation. Page and
+extracted-character limits bound pathological PDFs. Ollama is the likely
+throughput bottleneck, and synchronous uploads can occupy API capacity for their
+full duration.
 
 For greater load, improvements should be introduced in this order:
 
@@ -125,7 +125,7 @@ bounded retries with jitter for transient failures, load shedding, and separate
 worker/API resource limits. Retries must remain idempotent to avoid duplicate
 embeddings.
 
-## Error handling and recovery
+## Error handling and cleanup
 
 API errors use HTTP status codes and structured `detail.code`/`detail.message`
 objects for document and embedding operations. Validation failures return 400,
@@ -137,14 +137,14 @@ Document status reflects the indexing lifecycle:
 
 - `processing`: extraction/indexing is in progress;
 - `completed`: every chunk has a compatible persisted embedding;
-- `failed`: provider indexing failed after the document was persisted.
 
-Missing embeddings can be recovered idempotently through
-`POST /api/v1/embeddings/index`, optionally scoped to a document. It skips
-already indexed chunks. Upload storage uses a temporary file and atomic replace;
-database failures during initial persistence remove the stored PDF. Deletion
-commits database cascades before attempting file removal and logs filesystem
-cleanup failures.
+Indexing is part of the synchronous upload flow. A successful `201` therefore
+means all chunks have persisted embeddings. Any later processing, provider, or
+embedding-persistence failure deletes the document and its cascaded chunks and
+vectors, then removes the uploaded file so the same content can be retried.
+Upload storage uses a temporary file and atomic replace. The unique content hash
+constraint prevents duplicate documents, including concurrent identical
+uploads.
 
 The liveness endpoint deliberately ignores dependencies. Readiness checks
 PostgreSQL only; it does not currently verify Ollama or model installation.
@@ -157,7 +157,7 @@ Implemented:
 - automatic Alembic migration at startup;
 - PDF validation, extraction, normalization, chunking, and persistent storage;
 - document CRUD with pagination, duplicate detection, and cascade deletion;
-- automatic and manual idempotent embedding indexing;
+- automatic embedding indexing during upload with failure cleanup;
 - cosine-similarity retrieval with source metadata;
 - focused unit and real-PostgreSQL integration tests;
 - health, readiness, structured errors, and local sample data.

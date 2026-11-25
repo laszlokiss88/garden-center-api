@@ -48,7 +48,15 @@ class OllamaEmbeddingProvider:
         self.model = model
         self.dimensions = dimensions
         self.timeout_seconds = timeout_seconds
-        self._transport = transport
+        self._client = httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            transport=transport,
+        )
+
+    async def aclose(self) -> None:
+        """Release connections held by the provider."""
+        await self._client.aclose()
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         """Generate and validate a batch of Ollama embeddings."""
@@ -56,15 +64,10 @@ class OllamaEmbeddingProvider:
             return []
 
         try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout_seconds,
-                transport=self._transport,
-            ) as client:
-                response = await client.post(
-                    "/api/embed",
-                    json={"model": self.model, "input": list(texts)},
-                )
+            response = await self._client.post(
+                "/api/embed",
+                json={"model": self.model, "input": list(texts)},
+            )
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             logger.warning("Ollama embedding request failed: %s", exc)
             raise EmbeddingProviderError(

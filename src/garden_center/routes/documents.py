@@ -80,11 +80,34 @@ def _document_detail(document: Document) -> DocumentDetailResponse:
     )
 
 
+async def _cleanup_failed_upload(
+    session: AsyncSession,
+    document_id: uuid.UUID,
+    settings: Settings,
+) -> None:
+    """Remove all persisted artifacts for an upload that did not finish."""
+    try:
+        document = await get_document(session, document_id)
+        if document is not None:
+            await delete_document(session, document, settings)
+    except SQLAlchemyError:
+        logger.exception("Could not clean up failed document %s", document_id)
+        raise _error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "database_unavailable",
+            "The failed document could not be cleaned up.",
+        ) from None
+
+
 @router.post(
     "",
     response_model=DocumentResponse,
     status_code=status.HTTP_201_CREATED,
-    responses={400: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    responses={
+        400: {"model": ErrorResponse},
+        409: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
 )
 async def upload_document(
     session: SessionDependency,
@@ -97,6 +120,7 @@ async def upload_document(
     try:
         try:
             document = await create_document(session, file, settings)
+            document_id = document.id
         except DocumentValidationError as exc:
             raise _error(status.HTTP_400_BAD_REQUEST, exc.code, exc.message) from exc
         except DuplicateDocumentError as exc:
@@ -116,21 +140,23 @@ async def upload_document(
                 session,
                 provider,
                 settings.embedding_batch_size,
-                document.id,
+                document,
             )
-            indexed_document = await get_document(session, document.id)
+            indexed_document = await get_document(session, document_id)
             if indexed_document is None:
                 raise SQLAlchemyError("Indexed document could not be reloaded")
             document = indexed_document
         except EmbeddingProviderError as exc:
-            logger.warning("Document %s indexing failed: %s", document.id, exc.code)
+            logger.warning("Document %s indexing failed: %s", document_id, exc.code)
+            await _cleanup_failed_upload(session, document_id, settings)
             raise _error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 exc.code,
                 exc.message,
             ) from exc
         except SQLAlchemyError:
-            logger.exception("Document %s embedding persistence failed", document.id)
+            logger.exception("Document %s embedding persistence failed", document_id)
+            await _cleanup_failed_upload(session, document_id, settings)
             raise _error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "database_unavailable",

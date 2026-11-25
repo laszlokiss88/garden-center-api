@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     database_url: str
     document_storage_path: Path = Path("/data/uploads")
     max_upload_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_pdf_pages: int = Field(default=500, gt=0)
+    max_extracted_characters: int = Field(default=2_000_000, gt=0)
     chunk_size_tokens: int = Field(default=500, gt=0)
     chunk_overlap_tokens: int = Field(default=75, ge=0)
     ollama_url: str = "http://ollama:11434"

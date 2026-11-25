@@ -2,12 +2,11 @@
 
 import logging
 import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeVar
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import cast, func, select, update
+from sqlalchemy import cast, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
@@ -19,15 +18,6 @@ from garden_center.models import (
 )
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
-
-
-@dataclass(frozen=True, slots=True)
-class IndexResult:
-    """Counts returned after an idempotent indexing operation."""
-
-    indexed_chunks: int
-    skipped_chunks: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,60 +32,16 @@ class SearchResult:
     similarity: float
 
 
-def _batches(  # noqa: UP047 - keep compatible with pre-3.12 tooling
-    values: Sequence[T], size: int
-) -> list[Sequence[T]]:
-    return [values[index : index + size] for index in range(0, len(values), size)]
-
-
 async def index_document_chunks(
     session: AsyncSession,
     provider: EmbeddingProvider,
     batch_size: int,
-    document_id: uuid.UUID | None = None,
-) -> IndexResult:
-    """Generate only missing embeddings for the selected embedding model."""
-    document_filter = (
-        DocumentChunk.document_id == document_id if document_id is not None else None
-    )
-    total_query = select(func.count()).select_from(DocumentChunk)
-    if document_filter is not None:
-        total_query = total_query.where(document_filter)
-    total_chunks = int(await session.scalar(total_query) or 0)
-
-    already_indexed = (
-        select(ChunkEmbedding.id)
-        .where(
-            ChunkEmbedding.chunk_id == DocumentChunk.id,
-            ChunkEmbedding.embedding_provider == provider.provider_name,
-            ChunkEmbedding.embedding_model == provider.model,
-        )
-        .exists()
-    )
-    missing_query = (
-        select(DocumentChunk)
-        .where(~already_indexed)
-        .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
-    )
-    if document_filter is not None:
-        missing_query = missing_query.where(document_filter)
-    missing_chunks = list(await session.scalars(missing_query))
-    affected_document_ids = {chunk.document_id for chunk in missing_chunks}
-
-    if not affected_document_ids:
-        if document_id is not None and total_chunks > 0:
-            await _set_document_statuses(
-                session, {document_id}, ProcessingStatus.COMPLETED
-            )
-        return IndexResult(indexed_chunks=0, skipped_chunks=total_chunks)
-
-    await _set_document_statuses(
-        session, affected_document_ids, ProcessingStatus.PROCESSING
-    )
-
-    indexed = 0
+    document: Document,
+) -> None:
+    """Generate and persist embeddings for a newly uploaded document."""
     try:
-        for batch in _batches(missing_chunks, batch_size):
+        for start in range(0, len(document.chunks), batch_size):
+            batch = document.chunks[start : start + batch_size]
             vectors = await provider.embed([chunk.text_content for chunk in batch])
             if len(vectors) != len(batch) or any(
                 len(vector) != provider.dimensions for vector in vectors
@@ -116,44 +62,20 @@ async def index_document_chunks(
                     for chunk, vector in zip(batch, vectors, strict=True)
                 ]
             )
-            try:
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            indexed += len(batch)
+            await session.commit()
             logger.info(
                 "Indexed %d chunks with %s/%s",
                 len(batch),
                 provider.provider_name,
                 provider.model,
             )
+        document.processing_status = ProcessingStatus.COMPLETED
+        await session.commit()
     except EmbeddingProviderError:
-        await session.rollback()
-        await _set_document_statuses(
-            session, affected_document_ids, ProcessingStatus.FAILED
-        )
         raise
-
-    await _set_document_statuses(
-        session, affected_document_ids, ProcessingStatus.COMPLETED
-    )
-
-    return IndexResult(indexed_chunks=indexed, skipped_chunks=total_chunks - indexed)
-
-
-async def _set_document_statuses(
-    session: AsyncSession,
-    document_ids: set[uuid.UUID],
-    processing_status: ProcessingStatus,
-) -> None:
-    """Persist a lifecycle status for selected documents."""
-    await session.execute(
-        update(Document)
-        .where(Document.id.in_(document_ids))
-        .values(processing_status=processing_status)
-    )
-    await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise
 
 
 async def semantic_search(

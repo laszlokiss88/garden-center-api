@@ -82,7 +82,9 @@ normally return no result when an appropriate similarity threshold is used.
 7. Embed search text in the same embedding space and order compatible chunks
    by pgvector cosine distance.
 
-Embedding generation is idempotent. Searches cannot mix embeddings created by
+Embeddings are generated automatically during upload. If extraction, indexing,
+or persistence fails, the document, chunks, vectors, and stored PDF are removed
+so the same PDF can be retried. Searches cannot mix embeddings created by
 different provider/model/dimension combinations.
 
 ## API
@@ -95,8 +97,6 @@ different provider/model/dimension combinations.
 | `GET` | `/api/v1/documents?limit=20&offset=0` | Paginated document metadata |
 | `GET` | `/api/v1/documents/{id}` | Metadata and extracted chunks |
 | `DELETE` | `/api/v1/documents/{id}` | Delete PDF, chunks, and embeddings |
-| `POST` | `/api/v1/embeddings/index` | Index missing embeddings for all documents |
-| `POST` | `/api/v1/embeddings/index?document_id={id}` | Recover or reindex one document |
 | `POST` | `/api/v1/search` | Retrieve semantically similar chunks |
 
 The upload response includes metadata, processing status, and chunk count, with
@@ -105,18 +105,13 @@ with HTTP 409 using its SHA-256 hash. The document list returns `items`, `total`
 `limit`, and `offset`; `limit` defaults to 20 and is capped at 100. PostgreSQL
 computes chunk counts without loading chunk text.
 
-Manual recovery after a provider failure:
-
-```powershell
-curl.exe -X POST "http://localhost:8000/api/v1/embeddings/index?document_id={document-id}"
-```
-
 ### PDF limitations
 
 - Filename extension and content type must identify a PDF.
 - Maximum upload size defaults to 10 MiB.
 - Scanned PDFs, OCR, encrypted PDFs, and background processing are unsupported.
-- A document is marked `failed` if Ollama indexing fails after persistence.
+- Failed uploads are removed and can be submitted again after the dependency
+  recovers.
 
 ## Configuration
 
@@ -134,6 +129,8 @@ Copy-Item .env.example .env
 | `DATABASE_URL` | Compose PostgreSQL URL | SQLAlchemy/psycopg connection URL |
 | `DOCUMENT_STORAGE_PATH` | `/data/uploads` | PDF path inside the API container |
 | `MAX_UPLOAD_SIZE_BYTES` | `10485760` | Upload limit |
+| `MAX_PDF_PAGES` | `500` | Maximum pages processed per PDF |
+| `MAX_EXTRACTED_CHARACTERS` | `2000000` | Extracted-text safety limit |
 | `CHUNK_SIZE_TOKENS` | `500` | Maximum tokens per chunk |
 | `CHUNK_OVERLAP_TOKENS` | `75` | Adjacent chunk overlap |
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama endpoint |

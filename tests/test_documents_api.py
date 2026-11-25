@@ -29,9 +29,24 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
             transport=transport,
             base_url="http://testserver",
         ) as client:
-            created = await client.post(
-                "/api/v1/documents",
-                files={"file": ("garden.pdf", pdf, "application/pdf")},
+            concurrent_uploads = await asyncio.gather(
+                client.post(
+                    "/api/v1/documents",
+                    files={"file": ("garden.pdf", pdf, "application/pdf")},
+                ),
+                client.post(
+                    "/api/v1/documents",
+                    files={"file": ("garden-copy.pdf", pdf, "application/pdf")},
+                ),
+            )
+            assert sorted(response.status_code for response in concurrent_uploads) == [
+                201,
+                409,
+            ]
+            created = next(
+                response
+                for response in concurrent_uploads
+                if response.status_code == 201
             )
             assert created.status_code == 201, created.text
             body = created.json()
@@ -141,10 +156,12 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
 
 
 @pytest.mark.integration
-def test_failed_automatic_indexing_can_be_recovered_manually() -> None:
+def test_failed_upload_is_cleaned_up_and_can_be_retried() -> None:
     async def scenario() -> None:
-        pdf = make_pdf([f"Indexing failure recovery {uuid.uuid4()}"])
+        pdf = make_pdf([f"Indexing failure retry {uuid.uuid4()}"])
         content_hash = hashlib.sha256(pdf).hexdigest()
+        storage_path = get_settings().document_storage_path
+        files_before = set(storage_path.glob("*.pdf"))
         transport = ASGITransport(app=app)
         app.dependency_overrides[get_embedding_provider] = FailingEmbeddingProvider
 
@@ -161,25 +178,44 @@ def test_failed_automatic_indexing_can_be_recovered_manually() -> None:
                 assert failed.json()["detail"]["code"] == "ollama_unavailable"
 
                 async with async_session_factory() as session:
-                    document = await session.scalar(
-                        select(Document).where(Document.content_hash == content_hash)
+                    document_count = await session.scalar(
+                        select(func.count())
+                        .select_from(Document)
+                        .where(Document.content_hash == content_hash)
                     )
-                    assert document is not None
-                    assert document.processing_status == "failed"
-                    document_id = document.id
+                    chunk_count = await session.scalar(
+                        select(func.count())
+                        .select_from(DocumentChunk)
+                        .join(Document)
+                        .where(Document.content_hash == content_hash)
+                    )
+                    embedding_count = await session.scalar(
+                        select(func.count())
+                        .select_from(ChunkEmbedding)
+                        .join(DocumentChunk)
+                        .join(Document)
+                        .where(Document.content_hash == content_hash)
+                    )
+                    assert (document_count, chunk_count, embedding_count) == (0, 0, 0)
+                assert set(storage_path.glob("*.pdf")) == files_before
 
                 app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
-                recovered = await client.post(
-                    "/api/v1/embeddings/index",
-                    params={"document_id": str(document_id)},
+                retried = await client.post(
+                    "/api/v1/documents",
+                    files={"file": ("retry.pdf", pdf, "application/pdf")},
                 )
-                assert recovered.status_code == 200
-                assert recovered.json()["indexed_chunks"] > 0
+                assert retried.status_code == 201, retried.text
+                assert retried.json()["processing_status"] == "completed"
 
-                detail = await client.get(f"/api/v1/documents/{document_id}")
-                assert detail.json()["processing_status"] == "completed"
+                async with async_session_factory() as session:
+                    persisted = await session.scalar(
+                        select(Document).where(Document.content_hash == content_hash)
+                    )
+                    assert persisted is not None
 
-                deleted = await client.delete(f"/api/v1/documents/{document_id}")
+                deleted = await client.delete(
+                    f"/api/v1/documents/{retried.json()['id']}"
+                )
                 assert deleted.status_code == 204
         finally:
             app.dependency_overrides.pop(get_embedding_provider, None)

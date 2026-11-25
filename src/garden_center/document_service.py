@@ -29,6 +29,20 @@ class DuplicateDocumentError(ValueError):
     """Raised when the same PDF content has already been uploaded."""
 
 
+def _process_document(content: bytes, settings: Settings):
+    """Extract and chunk PDF content."""
+    pages = extract_pdf_pages(
+        content,
+        max_pages=settings.max_pdf_pages,
+        max_characters=settings.max_extracted_characters,
+    )
+    return chunk_pages(
+        pages,
+        chunk_size=settings.chunk_size_tokens,
+        overlap=settings.chunk_overlap_tokens,
+    )
+
+
 def _document_path(storage_path: Path, document_id: uuid.UUID) -> Path:
     return storage_path / f"{document_id}.pdf"
 
@@ -59,12 +73,7 @@ async def create_document(
         content,
         settings.max_upload_size_bytes,
     )
-    pages = extract_pdf_pages(content)
-    chunks = chunk_pages(
-        pages,
-        chunk_size=settings.chunk_size_tokens,
-        overlap=settings.chunk_overlap_tokens,
-    )
+    chunks = await asyncio.to_thread(_process_document, content, settings)
     content_hash = hashlib.sha256(content).hexdigest()
 
     existing_id = await session.scalar(
