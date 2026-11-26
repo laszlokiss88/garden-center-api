@@ -160,9 +160,7 @@ def test_search_excludes_processing_documents() -> None:
             session.add(document)
             await session.commit()
             try:
-                results = await semantic_search(
-                    session, provider, "rose care", 5, 0.5
-                )
+                results = await semantic_search(session, provider, "rose care", 5, 0.5)
                 assert results == []
             finally:
                 await session.delete(document)

@@ -33,7 +33,8 @@ def test_anthropic_uses_native_system_prompt() -> None:
                         {"type": "text", "text": "First part."},
                         {"type": "tool_use", "name": "ignored"},
                         {"type": "text", "text": "Second part."},
-                    ]
+                    ],
+                    "usage": {"input_tokens": 23, "output_tokens": 7},
                 },
             )
 
@@ -45,10 +46,10 @@ def test_anthropic_uses_native_system_prompt() -> None:
             transport=httpx.MockTransport(handler),
         )
         try:
-            assert (
-                await provider.generate("How?", ["Context"])
-                == "First part.\nSecond part."
-            )
+            result = await provider.generate("How?", ["Context"])
+            assert result.answer == "First part.\nSecond part."
+            assert result.usage.input_tokens == 23
+            assert result.usage.output_tokens == 7
         finally:
             await provider.aclose()
 
@@ -104,7 +105,9 @@ def test_ollama_uses_system_role_with_chat_api() -> None:
                     "message": {
                         "role": "assistant",
                         "content": "Natural answer.",
-                    }
+                    },
+                    "prompt_eval_count": 19,
+                    "eval_count": 5,
                 },
             )
 
@@ -116,7 +119,10 @@ def test_ollama_uses_system_role_with_chat_api() -> None:
             transport=httpx.MockTransport(handler),
         )
         try:
-            assert await provider.generate("How?", ["Context"]) == "Natural answer."
+            result = await provider.generate("How?", ["Context"])
+            assert result.answer == "Natural answer."
+            assert result.usage.input_tokens == 19
+            assert result.usage.output_tokens == 5
         finally:
             await provider.aclose()
 

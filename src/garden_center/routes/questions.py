@@ -14,7 +14,7 @@ from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
 from garden_center.llm import LLMProvider, LLMProviderError
 from garden_center.rag_service import answer_question
 from garden_center.schemas import (
-    AnswerSourceResponse,
+    AnswerContextResponse,
     ErrorResponse,
     QuestionRequest,
     QuestionResponse,
@@ -68,6 +68,8 @@ async def ask_question(
             request.question,
             settings.search_top_k,
             settings.search_similarity_threshold,
+            settings.rag_context_token_budget,
+            settings.llm_max_tokens,
         )
     except EmbeddingProviderError as exc:
         logger.warning("Question retrieval failed [%s]: %s", exc.code, exc.message)
@@ -87,8 +89,8 @@ async def ask_question(
             },
         ) from None
 
-    sources = [
-        AnswerSourceResponse(
+    context = [
+        AnswerContextResponse(
             document_id=source.document_id,
             filename=source.filename,
             page_number=source.page_number,
@@ -100,7 +102,7 @@ async def ask_question(
     ]
     return QuestionResponse(
         answer=result["answer"],
-        provider=llm_provider.provider_name if sources else None,
-        model=llm_provider.model if sources else None,
-        sources=sources,
+        provider=llm_provider.provider_name if context else None,
+        model=llm_provider.model if context else None,
+        context=context,
     )

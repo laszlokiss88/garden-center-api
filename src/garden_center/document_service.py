@@ -69,7 +69,6 @@ async def create_document(
         content,
         settings.max_upload_size_bytes,
     )
-    chunks = await asyncio.to_thread(_process_document, content, settings)
     content_hash = hashlib.sha256(content).hexdigest()
 
     existing_id = await session.scalar(
@@ -78,6 +77,7 @@ async def create_document(
     if existing_id is not None:
         raise DuplicateDocumentError("This PDF has already been uploaded.")
 
+    chunks = await asyncio.to_thread(_process_document, content, settings)
     stored_file = await storage.upload(
         content=content,
         content_type=PDF_CONTENT_TYPE,

@@ -101,8 +101,8 @@ class QuestionRequest(BaseModel):
     ]
 
 
-class AnswerSourceResponse(BaseModel):
-    """An excerpt used as grounding context for a generated answer."""
+class AnswerContextResponse(BaseModel):
+    """A retrieved excerpt provided to the LLM as grounding context."""
 
     document_id: uuid.UUID
     filename: str
@@ -113,9 +113,9 @@ class AnswerSourceResponse(BaseModel):
 
 
 class QuestionResponse(BaseModel):
-    """A grounded answer and its identifiable source excerpts."""
+    """A grounded answer and the excerpts provided to the LLM."""
 
     answer: str
     provider: str | None
     model: str | None
-    sources: list[AnswerSourceResponse]
+    context: list[AnswerContextResponse]

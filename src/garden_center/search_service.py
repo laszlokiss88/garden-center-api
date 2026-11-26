@@ -29,6 +29,7 @@ class SearchResult:
     page_number: int
     chunk_index: int
     text: str
+    token_count: int
     similarity: float
 
 
@@ -73,7 +74,7 @@ async def index_document_chunks(
             provider.provider_name,
             provider.model,
         )
-    except (EmbeddingProviderError, SQLAlchemyError):
+    except EmbeddingProviderError, SQLAlchemyError:
         await session.rollback()
         raise
 
@@ -117,6 +118,7 @@ async def semantic_search(
             DocumentChunk.source_page,
             DocumentChunk.chunk_index,
             DocumentChunk.text_content,
+            DocumentChunk.token_count,
             similarity,
         )
         .join(DocumentChunk, DocumentChunk.id == compatible.c.chunk_id)
@@ -136,6 +138,7 @@ async def semantic_search(
             page_number=row.source_page,
             chunk_index=row.chunk_index,
             text=row.text_content,
+            token_count=row.token_count,
             similarity=float(row.similarity),
         )
         for row in rows

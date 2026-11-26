@@ -68,7 +68,8 @@ Other useful demo queries:
 - `What should I do about yellow leaves?`
 
 The answer response includes the generation provider/model and the exact
-document, page, chunk, excerpt, and similarity for every retrieved source.
+document, page, chunk, excerpt, and similarity for every chunk provided to the
+LLM as grounding context. It does not claim that the model used every excerpt.
 Questions without relevant passages return an explicit insufficient-information
 answer without calling the generation model.
 
@@ -104,7 +105,7 @@ different provider/model/dimension combinations.
 | `GET` | `/api/v1/documents/{id}` | Metadata and extracted chunks |
 | `DELETE` | `/api/v1/documents/{id}` | Delete PDF, chunks, and embeddings |
 | `POST` | `/api/v1/search` | Retrieve semantically similar chunks |
-| `POST` | `/api/v1/questions` | Generate a grounded answer with sources |
+| `POST` | `/api/v1/questions` | Generate an answer with grounding context |
 
 The upload response includes metadata, processing status, and chunk count, with
 a `Location` header for the detail endpoint. Duplicate PDF content is rejected
@@ -153,6 +154,8 @@ Copy-Item .env.example .env
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Anthropic generation model |
 | `LLM_TIMEOUT_SECONDS` | `60` | Generation request timeout |
 | `LLM_MAX_TOKENS` | `512` | Generation response token limit |
+| `RAG_CONTEXT_TOKEN_BUDGET` | `4096` | Estimated prompt and response token budget |
+| `OTEL_TRACING_ENABLED` | `false` | Export OpenTelemetry spans to the API console |
 
 ### Claude and Qwen3
 
@@ -168,6 +171,11 @@ The 1.7B model is suitable for a local demo, but still requires sufficient host
 RAM and is substantially slower on CPU-only machines. Increase
 `LLM_TIMEOUT_SECONDS` if generation regularly exceeds 60 seconds. Embeddings
 remain on Ollama in every mode.
+
+The RAG budget reserves space for the system prompt, question, source formatting,
+and configured maximum response before adding retrieved excerpts by similarity.
+`tiktoken` provides a consistent estimate for limiting context, but its token
+count is not exact for every supported generation provider.
 
 To use Claude, set these values in `.env` and restart the API:
 
@@ -196,6 +204,30 @@ docker compose exec api ruff format --check .
 
 To verify real Ollama integration, pull the model, upload the sample PDF, and run
 the search request from the quick start.
+
+## OpenTelemetry tracing
+
+Tracing is disabled by default and requires no credentials or external service.
+To inspect traces locally, set `OTEL_TRACING_ENABLED=true`, recreate the API
+container, and follow its console output:
+
+```powershell
+docker compose up --build -d api
+docker compose logs -f api
+```
+
+The official OpenTelemetry SDK exports spans through `ConsoleSpanExporter`.
+FastAPI instrumentation creates the request span, while OpenInference's
+LangChain instrumentation creates the LangGraph workflow and node spans.
+Application-specific helpers attach retrieval and context-budget metrics to the
+retrieval node, and provider/model plus actual token usage to the generation
+node. OpenInference input/output capture is explicitly masked, so questions,
+workflow state, excerpts, generated answers, and credentials are not recorded.
+
+For a larger deployment, the console exporter can later be replaced with a
+collector exporter. LangSmith or Langfuse can also be integrated at the workflow
+boundary for model-specific evaluation; neither is necessary for this local
+take-home assignment.
 
 ## Operations
 

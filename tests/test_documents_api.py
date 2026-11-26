@@ -18,7 +18,9 @@ from tests.pdf_factory import make_pdf
 
 
 @pytest.mark.integration
-def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
+def test_document_upload_retrieval_duplicate_and_cascade_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def scenario() -> None:
         unique_text = f"Garden care integration test {uuid.uuid4()}"
         pdf = make_pdf([unique_text, "A second page about healthy plants."])
@@ -67,6 +69,12 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete() -> None:
             stored_path = get_settings().document_storage_path / storage_key
             assert stored_path.exists()
 
+            def fail_processing(*_: object) -> None:
+                raise AssertionError("Duplicate PDF must not be processed")
+
+            monkeypatch.setattr(
+                "garden_center.document_service._process_document", fail_processing
+            )
             duplicate = await client.post(
                 "/api/v1/documents",
                 files={"file": ("copy.pdf", pdf, "application/pdf")},

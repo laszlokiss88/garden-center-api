@@ -68,16 +68,31 @@ flowchart LR
     R --> C{Relevant passages?}
     C -->|yes| G[Generate grounded answer]
     C -->|no| I[Insufficient-information answer]
-    G --> A[Answer with deterministic sources]
+    G --> A[Answer with deterministic context excerpts]
 ```
 
 `LLMProvider` isolates local Qwen3 generation from Anthropic Claude. Provider
 selection affects generation only: query and document embeddings always use
-the configured Ollama embedding model. Source metadata is built from retrieval
-results rather than model output, while the prompt restricts generation to
-retrieved excerpts and requests a clean answer without inline citations.
+the configured Ollama embedding model. Context metadata is built from retrieval
+results rather than model output. It identifies the excerpts provided to the
+model, not which excerpts the model actually used. The prompt restricts
+generation to those excerpts and requests a clean answer without inline citations.
+Retrieved chunks are added by descending similarity within a configurable token
+budget that reserves room for prompt framing and output. The `tiktoken` count is
+an estimate and may differ from the generation provider's native tokenizer.
 Grounding rules are sent through Anthropic's native `system` field and Ollama's
 chat `system` role; questions and excerpts remain in the separate user message.
+
+OpenTelemetry tracing is optional and disabled by default. FastAPI automatic
+instrumentation creates the request span, and OpenInference's LangChain
+instrumentation creates the LangGraph workflow and node spans from its callback
+events. Small telemetry helpers add counts, token-budget utilization,
+provider/model, and provider-reported token usage to the active node span without
+placing telemetry fields in `QuestionState`. Automatic input/output capture is
+masked, so questions, workflow state, document excerpts, generated answers, and
+credentials are not exported. This avoids duplicate manual workflow/node spans;
+the console exporter keeps the local setup self-contained and is shut down with
+the application.
 
 ## Key decisions and trade-offs
 
@@ -187,8 +202,9 @@ Implemented:
 - document CRUD with pagination, duplicate detection, and cascade deletion;
 - automatic embedding indexing during upload with failure cleanup;
 - cosine-similarity retrieval with source metadata;
-- LangGraph retrieval/relevance/generation workflow with deterministic sources;
+- LangGraph retrieval/relevance/generation workflow with deterministic context;
 - configurable local Qwen3 or Anthropic Claude answer generation;
+- optional OpenTelemetry request and RAG tracing to Docker console output;
 - focused unit and real-PostgreSQL integration tests;
 - health, readiness, structured errors, and local sample data.
 
@@ -197,7 +213,7 @@ Known limitations:
 - no OCR, scanned/encrypted PDF support, authentication, or tenant isolation;
 - processing is synchronous and has no durable job queue;
 - readiness does not include Ollama;
-- no retry policy, rate limiting, metrics, tracing, or ANN vector index;
+- no retry policy, rate limiting, metrics backend, or ANN vector index;
 - uploaded files use a node-local Docker volume rather than shared object
   storage.
 

@@ -7,10 +7,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 
+from garden_center.config import get_settings
 from garden_center.database import check_database_connection, dispose_database
 from garden_center.routes.documents import router as documents_router
 from garden_center.routes.questions import router as questions_router
 from garden_center.routes.search import router as search_router
+from garden_center.telemetry import configure_tracing, shutdown_tracing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,16 +21,20 @@ logging.basicConfig(
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Release pooled database connections when the application stops."""
     yield
-    await dispose_database()
+    try:
+        await dispose_database()
+    finally:
+        shutdown_tracing(app)
 
 
 app = FastAPI(title="Garden Center API", version="0.1.0", lifespan=lifespan)
 app.include_router(documents_router)
 app.include_router(search_router)
 app.include_router(questions_router)
+configure_tracing(app, get_settings().otel_tracing_enabled)
 
 
 @app.get("/health")

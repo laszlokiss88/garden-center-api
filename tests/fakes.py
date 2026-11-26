@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Sequence
 
 from garden_center.embeddings import EmbeddingProviderError
-from garden_center.llm import LLMProviderError
+from garden_center.llm import LLMGenerationResult, LLMProviderError, LLMTokenUsage
 
 
 class FakeEmbeddingProvider:
@@ -49,12 +49,17 @@ class FakeLLMProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def generate(self, question: str, sources: Sequence[str]) -> str:
+    async def generate(
+        self, question: str, sources: Sequence[str]
+    ) -> LLMGenerationResult:
         self.calls += 1
         assert question
         assert sources
         assert sources[0] == "Roses need regular watering."
-        return "Roses need regular watering."
+        return LLMGenerationResult(
+            answer="Roses need regular watering.",
+            usage=LLMTokenUsage(input_tokens=42, output_tokens=8),
+        )
 
 
 class FailingLLMProvider:
@@ -67,5 +72,7 @@ class FailingLLMProvider:
         self.code = code
         self.message = message
 
-    async def generate(self, question: str, sources: Sequence[str]) -> str:
+    async def generate(
+        self, question: str, sources: Sequence[str]
+    ) -> LLMGenerationResult:
         raise LLMProviderError(self.code, self.message)
