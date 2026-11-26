@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from garden_center.concurrency import llm_generation_slot
 from garden_center.embeddings import EmbeddingProvider
 from garden_center.llm import SYSTEM_PROMPT, LLMProvider
 from garden_center.search_service import SearchResult, semantic_search
@@ -141,9 +142,10 @@ async def _generate(
 ) -> dict[str, object]:
     llm_provider = runtime.context.llm_provider
     record_llm_metadata(llm_provider.provider_name, llm_provider.model)
-    generation = await llm_provider.generate(
-        state["question"], _source_excerpts(state["results"])
-    )
+    async with llm_generation_slot(llm_provider):
+        generation = await llm_provider.generate(
+            state["question"], _source_excerpts(state["results"])
+        )
     record_llm_usage(
         generation.usage.input_tokens,
         generation.usage.output_tokens,

@@ -138,11 +138,20 @@ extracted-character limits bound pathological PDFs. Ollama is the likely
 throughput bottleneck, and synchronous uploads can occupy API capacity for their
 full duration.
 
+Process-local per-IP rate limits protect the expensive question and upload
+endpoints. The direct ASGI peer address is used rather than trusting
+client-supplied forwarding headers. Each LLM provider exposes its configured
+process-local generation limit; Ollama defaults to two concurrent calls while
+Anthropic defaults to unlimited. A shared capacity limiter rejects excess work
+immediately instead of building an unbounded queue. These controls reset on
+restart and are independent per worker, which is appropriate only for the
+single-process demo deployment.
+
 For greater load, improvements should be introduced in this order:
 
 1. Measure upload duration, event-loop latency, database pool saturation,
    Ollama latency/error rate, chunk counts, and search latency.
-2. Bound concurrent embedding calls and apply request-size/rate limits.
+2. Bound concurrent embedding calls and move request limits to shared enforcement.
 3. Move extraction and indexing to durable workers with explicit queued states,
    while keeping search and health endpoints stateless.
 4. Run multiple API instances against shared PostgreSQL and object storage.
@@ -217,10 +226,11 @@ Known limitations:
 - no OCR, scanned/encrypted PDF support, authentication, or tenant isolation;
 - processing is synchronous and has no durable job queue;
 - readiness does not include Ollama;
-- no retry policy, rate limiting, metrics backend, or ANN vector index;
+- no retry policy, shared metrics/rate-limit backend, or ANN vector index;
 - uploaded files use a node-local Docker volume rather than shared object
   storage.
 
-The highest-value next step would be evaluating retrieval thresholds and answer
-groundedness against a small representative question set before adding more
-workflow complexity.
+For this take-home, retrieval and answer behavior can be checked with the
+representative, manually reproducible questions in the README. A dedicated RAG
+evaluation framework, dataset, metric suite, or model-comparison workflow is
+intentionally outside the assignment scope.

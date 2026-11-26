@@ -6,6 +6,7 @@ import json
 import httpx
 import pytest
 
+from garden_center.concurrency import llm_generation_slot
 from garden_center.llm import (
     SYSTEM_PROMPT,
     AnthropicLLMProvider,
@@ -43,8 +44,10 @@ def test_anthropic_uses_native_system_prompt() -> None:
             model="test-model",
             timeout_seconds=1,
             max_tokens=100,
+            max_concurrent_generations=None,
             transport=httpx.MockTransport(handler),
         )
+        assert provider.max_concurrent_generations is None
         try:
             result = await provider.generate("How?", ["Context"])
             assert result.answer == "First part.\nSecond part."
@@ -72,6 +75,7 @@ def test_anthropic_rejects_responses_without_valid_text(content: object) -> None
             model="test-model",
             timeout_seconds=1,
             max_tokens=100,
+            max_concurrent_generations=None,
             transport=httpx.MockTransport(
                 lambda _: httpx.Response(200, json={"content": content})
             ),
@@ -116,8 +120,10 @@ def test_ollama_uses_system_role_with_chat_api() -> None:
             model="test-model",
             timeout_seconds=1,
             max_tokens=100,
+            max_concurrent_generations=2,
             transport=httpx.MockTransport(handler),
         )
+        assert provider.max_concurrent_generations == 2
         try:
             result = await provider.generate("How?", ["Context"])
             assert result.answer == "Natural answer."
@@ -125,5 +131,49 @@ def test_ollama_uses_system_role_with_chat_api() -> None:
             assert result.usage.output_tokens == 5
         finally:
             await provider.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_provider_concurrency_configuration_controls_capacity() -> None:
+    async def scenario() -> None:
+        anthropic = AnthropicLLMProvider(
+            api_key="test-key",
+            model="unlimited-test-model",
+            timeout_seconds=1,
+            max_tokens=100,
+            max_concurrent_generations=None,
+        )
+        ollama = OllamaLLMProvider(
+            base_url="http://ollama.test",
+            model="limited-test-model",
+            timeout_seconds=1,
+            max_tokens=100,
+            max_concurrent_generations=1,
+        )
+        acquired = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold_ollama_slot() -> None:
+            async with llm_generation_slot(ollama):
+                acquired.set()
+                await release.wait()
+
+        task = asyncio.create_task(hold_ollama_slot())
+        try:
+            async with llm_generation_slot(anthropic):
+                async with llm_generation_slot(anthropic):
+                    pass
+
+            await asyncio.wait_for(acquired.wait(), timeout=1)
+            with pytest.raises(LLMProviderError) as error:
+                async with llm_generation_slot(ollama):
+                    pass
+            assert error.value.code == "generation_capacity_unavailable"
+        finally:
+            release.set()
+            await task
+            await anthropic.aclose()
+            await ollama.aclose()
 
     asyncio.run(scenario())

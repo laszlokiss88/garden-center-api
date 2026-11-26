@@ -10,6 +10,7 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
@@ -31,6 +32,7 @@ from garden_center.document_service import (
 from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
 from garden_center.file_storage import FileStorage
 from garden_center.models import Document
+from garden_center.rate_limiting import document_upload_rate_limit, limiter
 from garden_center.schemas import (
     DocumentChunkResponse,
     DocumentDetailResponse,
@@ -108,10 +110,13 @@ async def _cleanup_failed_upload(
     responses={
         400: {"model": ErrorResponse},
         409: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
     },
 )
+@limiter.limit(document_upload_rate_limit)
 async def upload_document(
+    request: Request,
     session: SessionDependency,
     settings: SettingsDependency,
     provider: ProviderDependency,

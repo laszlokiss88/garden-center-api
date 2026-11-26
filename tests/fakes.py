@@ -45,6 +45,7 @@ class FakeLLMProvider:
 
     provider_name = "test"
     model = "test-generation-model"
+    max_concurrent_generations = 2
 
     def __init__(self) -> None:
         self.calls = 0
@@ -67,6 +68,7 @@ class FailingLLMProvider:
 
     provider_name = "test"
     model = "test-generation-model"
+    max_concurrent_generations = 2
 
     def __init__(self, code: str, message: str) -> None:
         self.code = code

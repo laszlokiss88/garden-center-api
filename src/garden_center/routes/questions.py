@@ -3,18 +3,22 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from garden_center.config import Settings, get_settings
 from garden_center.database import get_database_session
-from garden_center.dependencies import get_embedding_provider, get_llm_provider
+from garden_center.dependencies import (
+    get_embedding_provider,
+    get_llm_provider,
+)
 from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
 from garden_center.llm import LLMProvider, LLMProviderError
 from garden_center.rag_service import answer_question
+from garden_center.rate_limiting import limiter, questions_rate_limit
 from garden_center.schemas import (
-    AnswerContextResponse,
+    AnswerSourceResponse,
     ErrorResponse,
     QuestionRequest,
     QuestionResponse,
@@ -50,10 +54,13 @@ def _provider_error(exc: LLMProviderError) -> HTTPException:
         502: {"model": ErrorResponse},
         503: {"model": ErrorResponse},
         504: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
     },
 )
+@limiter.limit(questions_rate_limit)
 async def ask_question(
-    request: QuestionRequest,
+    request: Request,
+    question_request: QuestionRequest,
     session: SessionDependency,
     settings: SettingsDependency,
     embedding_provider: EmbeddingDependency,
@@ -65,7 +72,7 @@ async def ask_question(
             session,
             embedding_provider,
             llm_provider,
-            request.question,
+            question_request.question,
             settings.search_top_k,
             settings.search_similarity_threshold,
             settings.rag_context_token_budget,
@@ -89,8 +96,8 @@ async def ask_question(
             },
         ) from None
 
-    context = [
-        AnswerContextResponse(
+    sources = [
+        AnswerSourceResponse(
             document_id=source.document_id,
             filename=source.filename,
             page_number=source.page_number,
@@ -102,7 +109,7 @@ async def ask_question(
     ]
     return QuestionResponse(
         answer=result["answer"],
-        provider=llm_provider.provider_name if context else None,
-        model=llm_provider.model if context else None,
-        context=context,
+        provider=llm_provider.provider_name if sources else None,
+        model=llm_provider.model if sources else None,
+        sources=sources,
     )

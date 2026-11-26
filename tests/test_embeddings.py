@@ -1,4 +1,4 @@
-"""Focused tests for Ollama failures, indexing, and semantic search."""
+"""Focused tests for Ollama failures and semantic retrieval."""
 
 import asyncio
 import hashlib
@@ -7,12 +7,9 @@ from typing import NoReturn
 
 import httpx
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from garden_center.database import async_session_factory
-from garden_center.dependencies import get_embedding_provider
 from garden_center.embeddings import EmbeddingProviderError, OllamaEmbeddingProvider
-from garden_center.main import app
 from garden_center.models import (
     ChunkEmbedding,
     Document,
@@ -36,7 +33,7 @@ def _connection_failure(request: httpx.Request) -> NoReturn:
 
 
 @pytest.mark.integration
-def test_search_returns_source_metadata() -> None:
+def test_semantic_search_returns_source_metadata() -> None:
     async def scenario() -> None:
         document_id = uuid.uuid4()
         provider = FakeEmbeddingProvider()
@@ -85,37 +82,20 @@ def test_search_returns_source_metadata() -> None:
             session.add(document)
             await session.commit()
 
-        app.dependency_overrides[get_embedding_provider] = lambda: provider
-        transport = ASGITransport(app=app)
         try:
-            async with AsyncClient(
-                transport=transport,
-                base_url="http://testserver",
-            ) as client:
-                search = await client.post(
-                    "/api/v1/search",
-                    json={"query": "rose care", "similarity_threshold": 0.5},
-                )
-                assert search.status_code == 200, search.text
-                results = search.json()["results"]
+            async with async_session_factory() as session:
+                results = await semantic_search(session, provider, "rose care", 5, 0.5)
                 assert len(results) == 1
-                assert results[0] == {
-                    "document_id": str(document_id),
-                    "filename": "search.pdf",
-                    "page_number": 1,
-                    "chunk_index": 0,
-                    "text": "Roses need regular watering.",
-                    "similarity": pytest.approx(1.0),
-                }
+                assert results[0].document_id == document_id
+                assert results[0].filename == "search.pdf"
+                assert results[0].page_number == 1
+                assert results[0].chunk_index == 0
+                assert results[0].text == "Roses need regular watering."
+                assert results[0].similarity == pytest.approx(1.0)
 
-                empty = await client.post(
-                    "/api/v1/search",
-                    json={"query": "unrelated", "similarity_threshold": 0.9},
-                )
-                assert empty.status_code == 200
-                assert empty.json()["results"] == []
+                empty = await semantic_search(session, provider, "unrelated", 5, 0.9)
+                assert empty == []
         finally:
-            app.dependency_overrides.pop(get_embedding_provider, None)
             async with async_session_factory() as session:
                 persisted = await session.get(Document, document_id)
                 if persisted is not None:

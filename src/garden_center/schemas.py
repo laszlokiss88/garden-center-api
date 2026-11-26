@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 
 
 class DocumentChunkResponse(BaseModel):
@@ -61,37 +61,6 @@ class ErrorResponse(BaseModel):
     detail: ErrorDetail
 
 
-class SearchRequest(BaseModel):
-    """Semantic search parameters."""
-
-    query: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
-    ]
-    top_k: int | None = Field(default=None, gt=0, le=100)
-    similarity_threshold: float | None = Field(default=None, ge=-1.0, le=1.0)
-
-
-class SearchResultResponse(BaseModel):
-    """A matching chunk with document source metadata."""
-
-    document_id: uuid.UUID
-    filename: str
-    page_number: int
-    chunk_index: int
-    text: str
-    similarity: float
-
-
-class SearchResponse(BaseModel):
-    """Semantic search results and the embedding space used."""
-
-    provider: str
-    model: str
-    dimensions: int
-    results: list[SearchResultResponse]
-
-
 class QuestionRequest(BaseModel):
     """A grounded question for the indexed document collection."""
 
@@ -101,7 +70,7 @@ class QuestionRequest(BaseModel):
     ]
 
 
-class AnswerContextResponse(BaseModel):
+class AnswerSourceResponse(BaseModel):
     """A retrieved excerpt provided to the LLM as grounding context."""
 
     document_id: uuid.UUID
@@ -118,4 +87,4 @@ class QuestionResponse(BaseModel):
     answer: str
     provider: str | None
     model: str | None
-    context: list[AnswerContextResponse]
+    sources: list[AnswerSourceResponse]

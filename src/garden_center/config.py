@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60.0, gt=0)
     llm_max_tokens: int = Field(default=512, gt=0, le=4096)
     rag_context_token_budget: int = Field(default=4096, gt=0, le=131072)
+    questions_rate_limit_per_minute: int = Field(default=10, gt=0)
+    document_upload_rate_limit_per_minute: int = Field(default=3, gt=0)
+    ollama_llm_max_concurrent_generations: int | None = Field(default=2, gt=0)
+    anthropic_llm_max_concurrent_generations: int | None = Field(default=None, gt=0)
     otel_tracing_enabled: bool = False
 
     @model_validator(mode="after")
@@ -46,6 +50,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
     )
 

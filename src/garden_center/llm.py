@@ -44,6 +44,7 @@ class LLMProvider(Protocol):
 
     provider_name: str
     model: str
+    max_concurrent_generations: int | None
 
     async def generate(
         self, question: str, sources: Sequence[str]
@@ -74,11 +75,13 @@ class AnthropicLLMProvider:
         model: str,
         timeout_seconds: float,
         max_tokens: int,
+        max_concurrent_generations: int | None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.max_tokens = max_tokens
+        self.max_concurrent_generations = max_concurrent_generations
         self._client = httpx.AsyncClient(
             base_url="https://api.anthropic.com",
             timeout=timeout_seconds,
@@ -187,10 +190,12 @@ class OllamaLLMProvider:
         model: str,
         timeout_seconds: float,
         max_tokens: int,
+        max_concurrent_generations: int | None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
+        self.max_concurrent_generations = max_concurrent_generations
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=timeout_seconds,

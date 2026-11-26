@@ -43,14 +43,6 @@ curl.exe -X POST http://localhost:8000/api/v1/documents `
   -F "file=@sample_data/flower_gardening_handbook.pdf;type=application/pdf"
 ```
 
-Save the returned `id`, then run a semantic search:
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/v1/search `
-  -H "Content-Type: application/json" `
-  -d '{"query":"How much sunlight do roses need?","top_k":5,"similarity_threshold":0.5}'
-```
-
 Ask a grounded question:
 
 ```powershell
@@ -59,9 +51,36 @@ curl.exe -X POST http://localhost:8000/api/v1/questions `
   -d '{"question":"How much sunlight do roses need?"}'
 ```
 
-Other useful demo queries:
+### Manual RAG checks
 
-- `Why should bulb leaves remain after flowering?`
+These representative checks use the uploaded sample handbook and require no
+separate evaluation framework.
+
+Answerable question:
+
+```powershell
+curl.exe -X POST http://localhost:8000/api/v1/questions `
+  -H "Content-Type: application/json" `
+  -d '{"question":"Why should bulb leaves remain after flowering?"}'
+```
+
+The answer should explain the role of the remaining foliage using handbook
+excerpts, and `sources` should contain the supporting document chunks.
+
+Question outside the handbook:
+
+```powershell
+curl.exe -X POST http://localhost:8000/api/v1/questions `
+  -H "Content-Type: application/json" `
+  -d '{"question":"How do I replace a car transmission?"}'
+```
+
+The response should state that the available documents do not provide enough
+information and return an empty `sources` array when no chunk passes the relevance
+threshold.
+
+Other useful manual questions:
+
 - `Can I plant lilies where cats have access?`
 - `How should I water flower pots during summer?`
 - `How can I attract pollinators all season?`
@@ -104,7 +123,6 @@ different provider/model/dimension combinations.
 | `GET` | `/api/v1/documents?limit=20&offset=0` | Paginated document metadata |
 | `GET` | `/api/v1/documents/{id}` | Metadata and extracted chunks |
 | `DELETE` | `/api/v1/documents/{id}` | Delete PDF, chunks, and embeddings |
-| `POST` | `/api/v1/search` | Retrieve semantically similar chunks |
 | `POST` | `/api/v1/questions` | Generate an answer with grounding context |
 
 The upload response includes metadata, processing status, and chunk count, with
@@ -155,6 +173,10 @@ Copy-Item .env.example .env
 | `LLM_TIMEOUT_SECONDS` | `60` | Generation request timeout |
 | `LLM_MAX_TOKENS` | `512` | Generation response token limit |
 | `RAG_CONTEXT_TOKEN_BUDGET` | `4096` | Estimated prompt and response token budget |
+| `QUESTIONS_RATE_LIMIT_PER_MINUTE` | `10` | Per-IP question requests per minute |
+| `DOCUMENT_UPLOAD_RATE_LIMIT_PER_MINUTE` | `3` | Per-IP uploads per minute |
+| `OLLAMA_LLM_MAX_CONCURRENT_GENERATIONS` | `2` | Concurrent Ollama generations per API process |
+| `ANTHROPIC_LLM_MAX_CONCURRENT_GENERATIONS` | empty | Concurrent Anthropic generations; empty means unlimited |
 | `OTEL_TRACING_ENABLED` | `false` | Export OpenTelemetry spans to the API console |
 
 ### Claude and Qwen3
@@ -189,6 +211,21 @@ Do not commit the API key. Claude mode requires outbound internet access and may
 incur Anthropic API charges. Only answer generation moves to Anthropic; document
 and question embeddings still use `nomic-embed-text` through Ollama.
 
+### Request protection
+
+Expensive POST endpoints use per-IP, per-minute limits. Client identity comes
+from the direct network peer; untrusted `X-Forwarded-For` headers are ignored.
+If the API is later deployed behind a trusted reverse proxy, proxy handling must
+be configured explicitly or all clients will share the proxy's address.
+
+Each LLM provider exposes its configured process-local concurrency limit. Ollama
+defaults to two concurrent generations; Anthropic is unlimited by default. A
+configured provider returns HTTP 503 immediately when all slots are occupied.
+Rate-limit counters and generation capacity are process-local, reset on restart,
+and are not coordinated across multiple API workers or instances. This is
+intentional for the single-instance demo and must be replaced by shared
+enforcement before scaling horizontally.
+
 ## Tests and quality checks
 
 All Python commands run inside Docker. Automated tests use a deterministic fake
@@ -202,8 +239,10 @@ docker compose exec api ruff check .
 docker compose exec api ruff format --check .
 ```
 
-To verify real Ollama integration, pull the model, upload the sample PDF, and run
-the search request from the quick start.
+To verify real Ollama integration, pull the models, upload the sample PDF, and
+run the question examples from the quick start. The take-home scope does not
+require a separate evaluation CLI, question dataset, relevance metrics,
+answer-quality metrics, or model comparison framework.
 
 ## OpenTelemetry tracing
 

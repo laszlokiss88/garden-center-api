@@ -44,6 +44,9 @@ async def get_llm_provider(
             model=settings.anthropic_model,
             timeout_seconds=settings.llm_timeout_seconds,
             max_tokens=settings.llm_max_tokens,
+            max_concurrent_generations=(
+                settings.anthropic_llm_max_concurrent_generations
+            ),
         )
     else:
         provider = OllamaLLMProvider(
@@ -51,6 +54,7 @@ async def get_llm_provider(
             model=settings.ollama_llm_model,
             timeout_seconds=settings.llm_timeout_seconds,
             max_tokens=settings.llm_max_tokens,
+            max_concurrent_generations=settings.ollama_llm_max_concurrent_generations,
         )
     try:
         yield provider
