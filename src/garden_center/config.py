@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float = Field(default=30.0, gt=0)
     search_top_k: int = Field(default=5, gt=0, le=100)
     search_similarity_threshold: float = Field(default=0.5, ge=-1.0, le=1.0)
+    llm_provider: Literal["anthropic", "ollama"] = "ollama"
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-sonnet-4-5"
+    ollama_llm_model: str = "qwen3:1.7b"
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    llm_max_tokens: int = Field(default=512, gt=0, le=4096)
 
     @model_validator(mode="after")
     def validate_chunk_configuration(self) -> Self:

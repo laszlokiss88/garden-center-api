@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Sequence
 
 from garden_center.embeddings import EmbeddingProviderError
+from garden_center.llm import LLMProviderError
 
 
 class FakeEmbeddingProvider:
@@ -37,3 +38,34 @@ class FailingEmbeddingProvider:
             "ollama_unavailable",
             "Ollama is unavailable or the embedding request timed out.",
         )
+
+
+class FakeLLMProvider:
+    """Deterministic grounded answer provider."""
+
+    provider_name = "test"
+    model = "test-generation-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, question: str, sources: Sequence[str]) -> str:
+        self.calls += 1
+        assert question
+        assert sources
+        assert sources[0] == "Roses need regular watering."
+        return "Roses need regular watering."
+
+
+class FailingLLMProvider:
+    """Generation provider that simulates a configured failure."""
+
+    provider_name = "test"
+    model = "test-generation-model"
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+
+    async def generate(self, question: str, sources: Sequence[str]) -> str:
+        raise LLMProviderError(self.code, self.message)

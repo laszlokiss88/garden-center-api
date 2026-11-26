@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from garden_center.database import check_database_connection, dispose_database
 from garden_center.routes.documents import router as documents_router
+from garden_center.routes.questions import router as questions_router
 from garden_center.routes.search import router as search_router
 
 logging.basicConfig(
@@ -27,6 +28,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Garden Center API", version="0.1.0", lifespan=lifespan)
 app.include_router(documents_router)
 app.include_router(search_router)
+app.include_router(questions_router)
 
 
 @app.get("/health")

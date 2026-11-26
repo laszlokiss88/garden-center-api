@@ -1,8 +1,8 @@
 # Garden Center API architecture
 
 This document describes the implementation as it exists today. The system is a
-flower-gardening document ingestion and semantic retrieval service; it is not
-yet a complete answer-generating RAG application.
+flower-gardening document ingestion, semantic retrieval, and grounded
+question-answering service.
 
 ## Components and data flow
 
@@ -20,6 +20,10 @@ flowchart LR
     EP --> Ollama[Ollama: nomic-embed-text]
     SS --> DB
     DB --> API
+    API --> RAG[LangGraph question workflow]
+    RAG --> GP[LLMProvider protocol]
+    GP --> Qwen[Ollama: Qwen3 1.7B]
+    GP --> Claude[Anthropic: Claude]
 ```
 
 Uploads pass through validation, extraction, normalization, token-aware
@@ -56,22 +60,24 @@ internals.
 
 ### LangGraph and generation providers
 
-There is currently no LangGraph graph, question-answer endpoint, prompt layer,
-or text-generation provider. Claude and Qwen3 cannot currently be selected by
-configuration. Consequently, the assignment-level flow below is a target, not
-implemented behavior:
+The question endpoint runs an explicit LangGraph state graph:
 
 ```mermaid
 flowchart LR
-    Q[Question] -. future .-> R[Retrieve passages]
-    R -. future .-> G[Generate grounded answer]
-    G -. future .-> A[Answer with sources]
+    Q[Question] --> R[Retrieve passages]
+    R --> C{Relevant passages?}
+    C -->|yes| G[Generate grounded answer]
+    C -->|no| I[Insufficient-information answer]
+    G --> A[Answer with deterministic sources]
 ```
 
-Completing that flow requires a small `GenerationProvider` boundary, local
-Qwen3 and optional Claude implementations, configuration-based dependency
-selection, and a LangGraph retrieval-to-generation graph. Retrieval should
-remain independent of the selected generation model.
+`LLMProvider` isolates local Qwen3 generation from Anthropic Claude. Provider
+selection affects generation only: query and document embeddings always use
+the configured Ollama embedding model. Source metadata is built from retrieval
+results rather than model output, while the prompt restricts generation to
+retrieved excerpts and requests a clean answer without inline citations.
+Grounding rules are sent through Anthropic's native `system` field and Ollama's
+chat `system` role; questions and excerpts remain in the separate user message.
 
 ## Key decisions and trade-offs
 
@@ -165,12 +171,13 @@ Implemented:
 - document CRUD with pagination, duplicate detection, and cascade deletion;
 - automatic embedding indexing during upload with failure cleanup;
 - cosine-similarity retrieval with source metadata;
+- LangGraph retrieval/relevance/generation workflow with deterministic sources;
+- configurable local Qwen3 or Anthropic Claude answer generation;
 - focused unit and real-PostgreSQL integration tests;
 - health, readiness, structured errors, and local sample data.
 
 Known limitations:
 
-- no answer generation, LangGraph workflow, Claude, or Qwen3 integration;
 - no OCR, scanned/encrypted PDF support, authentication, or tenant isolation;
 - processing is synchronous and has no durable job queue;
 - readiness does not include Ollama;
@@ -178,7 +185,6 @@ Known limitations:
 - uploaded files use a node-local Docker volume rather than shared object
   storage.
 
-The highest-value next step for the PwC assignment is the smallest complete
-RAG slice: provider-independent answer generation, a local Qwen3 implementation,
-a simple LangGraph retrieval-to-generation flow, source-grounded responses, and
-tests for success, invalid input, empty retrieval, timeout, and model failure.
+The highest-value next step would be evaluating retrieval thresholds and answer
+groundedness against a small representative question set before adding more
+workflow complexity.

@@ -90,3 +90,32 @@ class SearchResponse(BaseModel):
     model: str
     dimensions: int
     results: list[SearchResultResponse]
+
+
+class QuestionRequest(BaseModel):
+    """A grounded question for the indexed document collection."""
+
+    question: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
+    ]
+
+
+class AnswerSourceResponse(BaseModel):
+    """An excerpt used as grounding context for a generated answer."""
+
+    document_id: uuid.UUID
+    filename: str
+    page_number: int
+    chunk_index: int
+    text: str
+    similarity: float
+
+
+class QuestionResponse(BaseModel):
+    """A grounded answer and its identifiable source excerpts."""
+
+    answer: str
+    provider: str | None
+    model: str | None
+    sources: list[AnswerSourceResponse]

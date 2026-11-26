@@ -8,6 +8,7 @@ dependencies = [
     "alembic",
     "fastapi",
     "httpx",
+    "langgraph",
     "pgvector",
     "psycopg[binary]",
     "pymupdf",

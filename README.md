@@ -2,13 +2,8 @@
 
 Garden Center API is the backend of a flower-gardening knowledge assistant. It
 accepts text-based PDF guides, extracts and chunks their content, creates local
-Ollama embeddings, and retrieves relevant passages with PostgreSQL/pgvector.
-
-The current version implements document ingestion and semantic retrieval. It
-does **not** yet generate natural-language answers or run a LangGraph workflow;
-search results are the retrieved, source-attributed passages. See
-[Architecture](docs/architecture.md) for the design, trade-offs, and assignment
-gap analysis.
+Ollama embeddings, and answers questions from relevant PostgreSQL/pgvector
+passages through a small LangGraph workflow.
 
 ## Quick start
 
@@ -18,6 +13,7 @@ repository root:
 ```powershell
 docker compose up --build -d
 docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull qwen3:1.7b
 docker compose exec ollama ollama list
 ```
 
@@ -55,6 +51,14 @@ curl.exe -X POST http://localhost:8000/api/v1/search `
   -d '{"query":"How much sunlight do roses need?","top_k":5,"similarity_threshold":0.5}'
 ```
 
+Ask a grounded question:
+
+```powershell
+curl.exe -X POST http://localhost:8000/api/v1/questions `
+  -H "Content-Type: application/json" `
+  -d '{"question":"How much sunlight do roses need?"}'
+```
+
 Other useful demo queries:
 
 - `Why should bulb leaves remain after flowering?`
@@ -63,10 +67,10 @@ Other useful demo queries:
 - `How can I attract pollinators all season?`
 - `What should I do about yellow leaves?`
 
-The search response contains the document ID, filename, page number, chunk
-index, text, and cosine similarity. It does not synthesize an answer. Queries
-outside the handbook, such as current shop prices or tomorrow's weather, should
-normally return no result when an appropriate similarity threshold is used.
+The answer response includes the generation provider/model and the exact
+document, page, chunk, excerpt, and similarity for every retrieved source.
+Questions without relevant passages return an explicit insufficient-information
+answer without calling the generation model.
 
 ## Processing and retrieval workflow
 
@@ -81,6 +85,8 @@ normally return no result when an appropriate similarity threshold is used.
    them with their provider, model, and dimensions.
 7. Embed search text in the same embedding space and order compatible chunks
    by pgvector cosine distance.
+8. Route relevant results through LangGraph to the selected generation provider,
+   with retrieved excerpts as the only allowed grounding context.
 
 Embeddings are generated automatically during upload. If extraction, indexing,
 or persistence fails, the document, chunks, vectors, and stored PDF are removed
@@ -98,6 +104,7 @@ different provider/model/dimension combinations.
 | `GET` | `/api/v1/documents/{id}` | Metadata and extracted chunks |
 | `DELETE` | `/api/v1/documents/{id}` | Delete PDF, chunks, and embeddings |
 | `POST` | `/api/v1/search` | Retrieve semantically similar chunks |
+| `POST` | `/api/v1/questions` | Generate a grounded answer with sources |
 
 The upload response includes metadata, processing status, and chunk count, with
 a `Location` header for the detail endpoint. Duplicate PDF content is rejected
@@ -140,15 +147,39 @@ Copy-Item .env.example .env
 | `OLLAMA_TIMEOUT_SECONDS` | `30` | Ollama request timeout |
 | `SEARCH_TOP_K` | `5` | Default result limit |
 | `SEARCH_SIMILARITY_THRESHOLD` | `0.5` | Default minimum similarity |
+| `LLM_PROVIDER` | `ollama` | Generation provider: `ollama` or `anthropic` |
+| `OLLAMA_LLM_MODEL` | `qwen3:1.7b` | Local generation model |
+| `ANTHROPIC_API_KEY` | empty | Required when using Anthropic |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Anthropic generation model |
+| `LLM_TIMEOUT_SECONDS` | `60` | Generation request timeout |
+| `LLM_MAX_TOKENS` | `512` | Generation response token limit |
 
 ### Claude and Qwen3
 
-Claude/Qwen3 switching is **not implemented in the current codebase**. There is
-no generation-provider abstraction, Anthropic client, Qwen3 model configuration,
-or answer endpoint. Setting provider-related environment variables would have no
-effect. The only runtime model is the local Ollama `nomic-embed-text` embedding
-model. A future assignment phase would need to add a generation interface and
-both implementations before a configuration-only switch could be documented.
+Local Qwen3 is the default. Pull both required Ollama models before uploading or
+asking questions:
+
+```powershell
+docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull qwen3:1.7b
+```
+
+The 1.7B model is suitable for a local demo, but still requires sufficient host
+RAM and is substantially slower on CPU-only machines. Increase
+`LLM_TIMEOUT_SECONDS` if generation regularly exceeds 60 seconds. Embeddings
+remain on Ollama in every mode.
+
+To use Claude, set these values in `.env` and restart the API:
+
+```dotenv
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_api_key
+ANTHROPIC_MODEL=claude-sonnet-4-5
+```
+
+Do not commit the API key. Claude mode requires outbound internet access and may
+incur Anthropic API charges. Only answer generation moves to Anthropic; document
+and question embeddings still use `nomic-embed-text` through Ollama.
 
 ## Tests and quality checks
 
