@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.trace import StatusCode
 
+import garden_center.rag_service as rag_service
 from garden_center.dependencies import get_embedding_provider, get_llm_provider
 from garden_center.main import app
 from garden_center.rag_service import _select_context_results
@@ -141,6 +142,96 @@ def test_context_budget_excludes_oversized_chunks() -> None:
     selected = selection["results"]
     assert selected == []
     assert selection["truncated"] is False
+
+
+def test_shared_graph_keeps_concurrent_runtime_contexts_independent() -> None:
+    async def scenario() -> tuple[
+        list[tuple[object, object, str, int, float]],
+        FakeLLMProvider,
+        FakeLLMProvider,
+        int,
+    ]:
+        calls: list[tuple[object, object, str, int, float]] = []
+        both_started = asyncio.Event()
+        started_count = 0
+
+        async def fake_search(
+            session: object,
+            embedding_provider: object,
+            question: str,
+            top_k: int,
+            similarity_threshold: float,
+        ) -> list[SearchResult]:
+            nonlocal started_count
+            calls.append(
+                (
+                    session,
+                    embedding_provider,
+                    question,
+                    top_k,
+                    similarity_threshold,
+                )
+            )
+            started_count += 1
+            if started_count == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return [_source()]
+
+        session_a = object()
+        session_b = object()
+        embedding_a = FakeEmbeddingProvider()
+        embedding_b = FakeEmbeddingProvider()
+        llm_a = FakeLLMProvider()
+        llm_b = FakeLLMProvider()
+        graph_id = id(rag_service._RAG_GRAPH)
+
+        with patch("garden_center.rag_service.semantic_search", fake_search):
+            await asyncio.gather(
+                rag_service.answer_question(
+                    session_a,  # type: ignore[arg-type]
+                    embedding_a,
+                    llm_a,
+                    "question-a",
+                    3,
+                    0.3,
+                    4096,
+                    512,
+                ),
+                rag_service.answer_question(
+                    session_b,  # type: ignore[arg-type]
+                    embedding_b,
+                    llm_b,
+                    "question-b",
+                    7,
+                    0.7,
+                    2048,
+                    256,
+                ),
+            )
+
+        assert id(rag_service._RAG_GRAPH) == graph_id
+        assert next(call for call in calls if call[0] is session_a) == (
+            session_a,
+            embedding_a,
+            "question-a",
+            3,
+            0.3,
+        )
+        assert next(call for call in calls if call[0] is session_b) == (
+            session_b,
+            embedding_b,
+            "question-b",
+            7,
+            0.7,
+        )
+        return calls, llm_a, llm_b, graph_id
+
+    calls, llm_a, llm_b, _ = asyncio.run(scenario())
+
+    assert len(calls) == 2
+    assert llm_a.calls == 1
+    assert llm_b.calls == 1
 
 
 @pytest.mark.parametrize(

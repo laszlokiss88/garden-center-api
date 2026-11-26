@@ -1,9 +1,12 @@
 """LangGraph workflow for grounded document question answering."""
 
+from dataclasses import dataclass
 from typing import Literal, TypedDict
 
 import tiktoken
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import Runtime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from garden_center.embeddings import EmbeddingProvider
@@ -39,6 +42,19 @@ class ContextSelection(TypedDict):
     results: list[SearchResult]
     estimated_tokens: int
     truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RagRuntimeContext:
+    """Request-scoped dependencies and configuration for one graph run."""
+
+    session: AsyncSession
+    embedding_provider: EmbeddingProvider
+    llm_provider: LLMProvider
+    top_k: int
+    similarity_threshold: float
+    context_token_budget: int
+    output_token_allowance: int
 
 
 def _source_excerpts(results: list[SearchResult]) -> list[str]:
@@ -82,6 +98,90 @@ def _select_context_results(
     }
 
 
+async def _retrieve(
+    state: QuestionState,
+    runtime: Runtime[RagRuntimeContext],
+) -> dict[str, object]:
+    context = runtime.context
+    results = await semantic_search(
+        context.session,
+        context.embedding_provider,
+        state["question"],
+        context.top_k,
+        context.similarity_threshold,
+    )
+    record_retrieval_metrics(len(results))
+    selection = _select_context_results(
+        state["question"],
+        results,
+        context.context_token_budget,
+        context.output_token_allowance,
+    )
+    record_context_metrics(
+        retrieved_chunks=len(results),
+        included_chunks=len(selection["results"]),
+        estimated_tokens=selection["estimated_tokens"],
+        token_budget=context.context_token_budget,
+        truncated=selection["truncated"],
+    )
+    return {"results": selection["results"]}
+
+
+def _check_relevance(state: QuestionState) -> dict[str, object]:
+    return {"has_relevant_sources": bool(state["results"])}
+
+
+def _relevance_route(state: QuestionState) -> Literal["generate", "insufficient"]:
+    return "generate" if state["has_relevant_sources"] else "insufficient"
+
+
+async def _generate(
+    state: QuestionState,
+    runtime: Runtime[RagRuntimeContext],
+) -> dict[str, object]:
+    llm_provider = runtime.context.llm_provider
+    record_llm_metadata(llm_provider.provider_name, llm_provider.model)
+    generation = await llm_provider.generate(
+        state["question"], _source_excerpts(state["results"])
+    )
+    record_llm_usage(
+        generation.usage.input_tokens,
+        generation.usage.output_tokens,
+    )
+    return {"answer": generation.answer}
+
+
+def _insufficient(_: QuestionState) -> dict[str, object]:
+    return {"answer": INSUFFICIENT_INFORMATION_ANSWER}
+
+
+def build_rag_graph() -> CompiledStateGraph[
+    QuestionState,
+    RagRuntimeContext,
+    QuestionState,
+    QuestionState,
+]:
+    """Build and compile the reusable RAG workflow."""
+    graph = StateGraph(QuestionState, context_schema=RagRuntimeContext)
+    graph.add_node("retrieve", _retrieve)
+    graph.add_node("check_relevance", _check_relevance)
+    graph.add_node("generate", _generate)
+    graph.add_node("insufficient", _insufficient)
+    graph.add_edge(START, "retrieve")
+    graph.add_edge("retrieve", "check_relevance")
+    graph.add_conditional_edges(
+        "check_relevance",
+        _relevance_route,
+        {"generate": "generate", "insufficient": "insufficient"},
+    )
+    graph.add_edge("generate", END)
+    graph.add_edge("insufficient", END)
+    return graph.compile(name="garden_center_rag")
+
+
+_RAG_GRAPH = build_rag_graph()
+
+
 async def answer_question(
     session: AsyncSession,
     embedding_provider: EmbeddingProvider,
@@ -93,72 +193,20 @@ async def answer_question(
     output_token_allowance: int,
 ) -> QuestionState:
     """Run retrieval, relevance routing, and grounded answer generation."""
-
-    async def retrieve(state: QuestionState) -> dict[str, object]:
-        results = await semantic_search(
-            session,
-            embedding_provider,
-            state["question"],
-            top_k,
-            similarity_threshold,
-        )
-        record_retrieval_metrics(len(results))
-        selection = _select_context_results(
-            state["question"],
-            results,
-            context_token_budget,
-            output_token_allowance,
-        )
-        record_context_metrics(
-            retrieved_chunks=len(results),
-            included_chunks=len(selection["results"]),
-            estimated_tokens=selection["estimated_tokens"],
-            token_budget=context_token_budget,
-            truncated=selection["truncated"],
-        )
-        return {"results": selection["results"]}
-
-    def check_relevance(state: QuestionState) -> dict[str, object]:
-        return {"has_relevant_sources": bool(state["results"])}
-
-    def relevance_route(state: QuestionState) -> Literal["generate", "insufficient"]:
-        return "generate" if state["has_relevant_sources"] else "insufficient"
-
-    async def generate(state: QuestionState) -> dict[str, object]:
-        record_llm_metadata(llm_provider.provider_name, llm_provider.model)
-        generation = await llm_provider.generate(
-            state["question"], _source_excerpts(state["results"])
-        )
-        record_llm_usage(
-            generation.usage.input_tokens,
-            generation.usage.output_tokens,
-        )
-        return {"answer": generation.answer}
-
-    def insufficient(_: QuestionState) -> dict[str, object]:
-        return {"answer": INSUFFICIENT_INFORMATION_ANSWER}
-
-    graph = StateGraph(QuestionState)
-    graph.add_node("retrieve", retrieve)
-    graph.add_node("check_relevance", check_relevance)
-    graph.add_node("generate", generate)
-    graph.add_node("insufficient", insufficient)
-    graph.add_edge(START, "retrieve")
-    graph.add_edge("retrieve", "check_relevance")
-    graph.add_conditional_edges(
-        "check_relevance",
-        relevance_route,
-        {"generate": "generate", "insufficient": "insufficient"},
-    )
-    graph.add_edge("generate", END)
-    graph.add_edge("insufficient", END)
-
-    workflow = graph.compile(name="garden_center_rag")
-    return await workflow.ainvoke(
+    return await _RAG_GRAPH.ainvoke(
         {
             "question": question,
             "results": [],
             "has_relevant_sources": False,
             "answer": "",
-        }
+        },
+        context=RagRuntimeContext(
+            session=session,
+            embedding_provider=embedding_provider,
+            llm_provider=llm_provider,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            context_token_budget=context_token_budget,
+            output_token_allowance=output_token_allowance,
+        ),
     )

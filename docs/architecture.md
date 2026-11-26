@@ -77,6 +77,10 @@ the configured Ollama embedding model. Context metadata is built from retrieval
 results rather than model output. It identifies the excerpts provided to the
 model, not which excerpts the model actually used. The prompt restricts
 generation to those excerpts and requests a clean answer without inline citations.
+The graph is built and compiled once per API process. Each invocation supplies
+its request-scoped database session, providers, and search/token configuration
+through LangGraph's runtime context, so concurrent runs reuse only the immutable
+workflow definition and never share a database session.
 Retrieved chunks are added by descending similarity within a configurable token
 budget that reserves room for prompt framing and output. The `tiktoken` count is
 an estimate and may differ from the generation provider's native tokenizer.
