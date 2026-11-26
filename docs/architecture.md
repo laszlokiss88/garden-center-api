@@ -152,11 +152,27 @@ Indexing is part of the synchronous upload flow. A successful `201` therefore
 means all chunks have persisted embeddings. Any later processing, provider, or
 embedding-persistence failure deletes the document and its cascaded chunks and
 vectors, then removes the uploaded file so the same content can be retried.
+Embedding batches are flushed within one transaction; their vectors and the
+document's `completed` status are committed together. Search excludes documents
+that are still marked `processing`.
 Local file storage writes a temporary file and uses `os.replace` to publish
 each file atomically within the same filesystem. The database and filesystem do
 not form one atomic transaction, so explicit cleanup handles failures between
 those steps. The unique content hash constraint prevents duplicate documents,
 including concurrent identical uploads.
+
+An interrupted process can leave a document in `processing` from before the
+indexing transaction completes. To inspect records that are unlikely to belong
+to an active synchronous upload, run:
+
+```bash
+docker compose exec db psql -U garden_center -d garden_center -c \
+  "SELECT id, filename, created_at FROM documents WHERE processing_status = 'processing' AND created_at < now() - interval '1 hour';"
+```
+
+After confirming that no upload for a listed document is still running, delete
+it through `DELETE /api/v1/documents/{id}`. Using the API removes both database
+data and the stored file; deleting the row directly can leave an orphaned file.
 
 The liveness endpoint deliberately ignores dependencies. Readiness checks
 PostgreSQL only; it does not currently verify Ollama or model installation.

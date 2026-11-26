@@ -19,6 +19,7 @@ from garden_center.models import (
     DocumentChunk,
     ProcessingStatus,
 )
+from garden_center.search_service import semantic_search
 from tests.fakes import FakeEmbeddingProvider
 
 
@@ -120,6 +121,52 @@ def test_search_returns_source_metadata() -> None:
                 if persisted is not None:
                     await session.delete(persisted)
                     await session.commit()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.integration
+def test_search_excludes_processing_documents() -> None:
+    async def scenario() -> None:
+        document_id = uuid.uuid4()
+        provider = FakeEmbeddingProvider()
+        document = Document(
+            id=document_id,
+            filename="processing.pdf",
+            content_type="application/pdf",
+            file_size=100,
+            content_hash=hashlib.sha256(document_id.bytes).hexdigest(),
+            storage_key=f"documents/{document_id}.pdf",
+            processing_status=ProcessingStatus.PROCESSING,
+            chunks=[
+                DocumentChunk(
+                    id=uuid.uuid4(),
+                    chunk_index=0,
+                    text_content="Roses need regular watering.",
+                    source_page=1,
+                    token_count=6,
+                    embeddings=[
+                        ChunkEmbedding(
+                            embedding_provider=provider.provider_name,
+                            embedding_model=provider.model,
+                            embedding_dimensions=provider.dimensions,
+                            vector_data=[1.0, 0.0, 0.0],
+                        )
+                    ],
+                )
+            ],
+        )
+        async with async_session_factory() as session:
+            session.add(document)
+            await session.commit()
+            try:
+                results = await semantic_search(
+                    session, provider, "rose care", 5, 0.5
+                )
+                assert results == []
+            finally:
+                await session.delete(document)
+                await session.commit()
 
     asyncio.run(scenario())
 

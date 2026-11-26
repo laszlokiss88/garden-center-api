@@ -40,6 +40,7 @@ async def index_document_chunks(
 ) -> None:
     """Generate and persist embeddings for a newly uploaded document."""
     try:
+        indexed_count = 0
         for start in range(0, len(document.chunks), batch_size):
             batch = document.chunks[start : start + batch_size]
             vectors = await provider.embed([chunk.text_content for chunk in batch])
@@ -62,18 +63,17 @@ async def index_document_chunks(
                     for chunk, vector in zip(batch, vectors, strict=True)
                 ]
             )
-            await session.commit()
-            logger.info(
-                "Indexed %d chunks with %s/%s",
-                len(batch),
-                provider.provider_name,
-                provider.model,
-            )
+            await session.flush()
+            indexed_count += len(batch)
         document.processing_status = ProcessingStatus.COMPLETED
         await session.commit()
-    except EmbeddingProviderError:
-        raise
-    except SQLAlchemyError:
+        logger.info(
+            "Indexed %d chunks with %s/%s",
+            indexed_count,
+            provider.provider_name,
+            provider.model,
+        )
+    except (EmbeddingProviderError, SQLAlchemyError):
         await session.rollback()
         raise
 
@@ -121,7 +121,10 @@ async def semantic_search(
         )
         .join(DocumentChunk, DocumentChunk.id == compatible.c.chunk_id)
         .join(Document, Document.id == DocumentChunk.document_id)
-        .where(similarity >= similarity_threshold)
+        .where(
+            Document.processing_status == ProcessingStatus.COMPLETED,
+            similarity >= similarity_threshold,
+        )
         .order_by(distance)
         .limit(top_k)
     )
