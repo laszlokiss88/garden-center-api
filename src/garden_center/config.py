@@ -23,13 +23,13 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=768, gt=0)
     embedding_batch_size: int = Field(default=32, gt=0, le=256)
     ollama_timeout_seconds: float = Field(default=30.0, gt=0)
-    search_top_k: int = Field(default=5, gt=0, le=100)
-    search_similarity_threshold: float = Field(default=0.5, ge=-1.0, le=1.0)
+    search_top_k: int = Field(default=3, gt=0, le=100)
+    search_similarity_threshold: float = Field(default=0.6, ge=-1.0, le=1.0)
     llm_provider: Literal["anthropic", "ollama"] = "ollama"
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-4-5"
     ollama_llm_model: str = "qwen3:1.7b"
-    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    llm_timeout_seconds: float = Field(default=120.0, gt=0)
     llm_max_tokens: int = Field(default=512, gt=0, le=4096)
     rag_context_token_budget: int = Field(default=4096, gt=0, le=131072)
     questions_rate_limit_per_minute: int = Field(default=10, gt=0)

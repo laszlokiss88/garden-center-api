@@ -164,13 +164,13 @@ Copy-Item .env.example .env
 | `EMBEDDING_DIMENSIONS` | `768` | Expected vector dimensions |
 | `EMBEDDING_BATCH_SIZE` | `32` | Texts per embedding request |
 | `OLLAMA_TIMEOUT_SECONDS` | `30` | Ollama request timeout |
-| `SEARCH_TOP_K` | `5` | Default result limit |
-| `SEARCH_SIMILARITY_THRESHOLD` | `0.5` | Default minimum similarity |
+| `SEARCH_TOP_K` | `3` | Default result limit |
+| `SEARCH_SIMILARITY_THRESHOLD` | `0.6` | Default minimum similarity |
 | `LLM_PROVIDER` | `ollama` | Generation provider: `ollama` or `anthropic` |
 | `OLLAMA_LLM_MODEL` | `qwen3:1.7b` | Local generation model |
 | `ANTHROPIC_API_KEY` | empty | Required when using Anthropic |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Anthropic generation model |
-| `LLM_TIMEOUT_SECONDS` | `60` | Generation request timeout |
+| `LLM_TIMEOUT_SECONDS` | `120` | Generation request timeout |
 | `LLM_MAX_TOKENS` | `512` | Generation response token limit |
 | `RAG_CONTEXT_TOKEN_BUDGET` | `4096` | Estimated prompt and response token budget |
 | `QUESTIONS_RATE_LIMIT_PER_MINUTE` | `10` | Per-IP question requests per minute |
@@ -191,8 +191,9 @@ docker compose exec ollama ollama pull qwen3:1.7b
 
 The 1.7B model is suitable for a local demo, but still requires sufficient host
 RAM and is substantially slower on CPU-only machines. Increase
-`LLM_TIMEOUT_SECONDS` if generation regularly exceeds 60 seconds. Embeddings
-remain on Ollama in every mode.
+`LLM_TIMEOUT_SECONDS` if generation regularly exceeds the configured timeout. Embeddings
+remain on Ollama in every mode. When running locally on CPU, cold model startup
+and longer RAG contexts can significantly increase response times.
 
 The RAG budget reserves space for the system prompt, question, source formatting,
 and configured maximum response before adding retrieved excerpts by similarity.
