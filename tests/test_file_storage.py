@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from garden_center.file_storage import LocalFileStorage
+from garden_center.storage.local_file_storage import LocalFileStorage
 
 
 @pytest.mark.parametrize(

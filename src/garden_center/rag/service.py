@@ -9,15 +9,15 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from garden_center.concurrency import llm_generation_slot
-from garden_center.embeddings import EmbeddingProvider
-from garden_center.llm import SYSTEM_PROMPT, LLMProvider
-from garden_center.search_service import SearchResult, semantic_search
-from garden_center.telemetry import (
-    record_context_metrics,
+from garden_center.ai.embeddings import EmbeddingProvider
+from garden_center.ai.llm import SYSTEM_PROMPT, LLMProvider
+from garden_center.core.concurrency import acquire_llm_generation_slot
+from garden_center.rag.search import SearchResult, semantic_search
+from garden_center.rag.telemetry import (
+    record_context_attributes,
     record_llm_metadata,
     record_llm_usage,
-    record_retrieval_metrics,
+    record_retrieval_attributes,
 )
 
 INSUFFICIENT_INFORMATION_ANSWER = (
@@ -111,14 +111,14 @@ async def _retrieve(
         context.top_k,
         context.similarity_threshold,
     )
-    record_retrieval_metrics(len(results))
+    record_retrieval_attributes(len(results))
     selection = _select_context_results(
         state["question"],
         results,
         context.context_token_budget,
         context.output_token_allowance,
     )
-    record_context_metrics(
+    record_context_attributes(
         retrieved_chunks=len(results),
         included_chunks=len(selection["results"]),
         estimated_tokens=selection["estimated_tokens"],
@@ -142,7 +142,7 @@ async def _generate(
 ) -> dict[str, object]:
     llm_provider = runtime.context.llm_provider
     record_llm_metadata(llm_provider.provider_name, llm_provider.model)
-    async with llm_generation_slot(llm_provider):
+    async with acquire_llm_generation_slot(llm_provider):
         generation = await llm_provider.generate(
             state["question"], _source_excerpts(state["results"])
         )

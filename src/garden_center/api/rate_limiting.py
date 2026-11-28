@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.responses import JSONResponse
 
-from garden_center.config import get_settings
+from garden_center.core.config import get_settings
 
 # get_remote_address uses the ASGI peer address and does not trust forwarded headers.
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")

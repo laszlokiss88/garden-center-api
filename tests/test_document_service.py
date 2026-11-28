@@ -11,17 +11,27 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from garden_center.config import Settings, get_settings
-from garden_center.database import async_session_factory
-from garden_center.document_service import create_document
-from garden_center.file_storage import LocalFileStorage
-from garden_center.models import Document
+from garden_center.core.config import Settings, get_settings
+from garden_center.database.engine import async_session_factory
+from garden_center.database.models import Document
+from garden_center.documents.service import create_document
+from garden_center.storage.local_file_storage import LocalFileStorage
 from tests.pdf_factory import make_pdf
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    "commit_error",
+    [
+        IntegrityError("forced integrity failure", {}, Exception("failure")),
+        SQLAlchemyError("forced database failure"),
+    ],
+    ids=["integrity-error", "general-database-error"],
+)
 def test_database_failure_removes_stored_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    commit_error: SQLAlchemyError,
 ) -> None:
     async def scenario() -> None:
         current = get_settings()
@@ -42,10 +52,10 @@ def test_database_failure_removes_stored_file(
         async with async_session_factory() as session:
 
             async def fail_commit() -> None:
-                raise IntegrityError("forced commit failure", {}, Exception("failure"))
+                raise commit_error
 
             monkeypatch.setattr(session, "commit", fail_commit)
-            with pytest.raises(IntegrityError):
+            with pytest.raises(type(commit_error)):
                 await create_document(session, upload, settings, storage)
 
         assert not any(path.is_file() for path in tmp_path.rglob("*"))

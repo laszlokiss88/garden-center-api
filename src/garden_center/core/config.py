@@ -2,10 +2,12 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from garden_center.ai.types import LLMProviderName
 
 
 class Settings(BaseSettings):
@@ -25,14 +27,14 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: float = Field(default=30.0, gt=0)
     search_top_k: int = Field(default=3, gt=0, le=100)
     search_similarity_threshold: float = Field(default=0.6, ge=-1.0, le=1.0)
-    llm_provider: Literal["anthropic", "ollama"] = "ollama"
+    llm_provider: LLMProviderName = LLMProviderName.OLLAMA
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-4-5"
     ollama_llm_model: str = "qwen3:1.7b"
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
     llm_max_tokens: int = Field(default=512, gt=0, le=4096)
     rag_context_token_budget: int = Field(default=4096, gt=0, le=131072)
-    questions_rate_limit_per_minute: int = Field(default=10, gt=0)
+    questions_rate_limit_per_minute: int = Field(default=15, gt=0)
     document_upload_rate_limit_per_minute: int = Field(default=3, gt=0)
     ollama_llm_max_concurrent_generations: int | None = Field(default=2, gt=0)
     anthropic_llm_max_concurrent_generations: int | None = Field(default=None, gt=0)

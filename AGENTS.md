@@ -1,7 +1,7 @@
 ## Project
 Garden Center API is a Python/FastAPI RAG backend developed for a PwC Senior Backend Developer take-home assignment.
 
-Read `docs/assignment.pdf` for requirements and follow the existing architecture and conventions.
+Read `docs/Feladatkiiras_Backend_Developer_RAG.pdf` for requirements and follow the existing architecture and conventions.
 
 ## Development principles
 - Prefer simple, maintainable solutions over unnecessary complexity.

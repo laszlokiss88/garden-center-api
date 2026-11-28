@@ -3,8 +3,12 @@
 import uuid
 from collections.abc import Sequence
 
-from garden_center.embeddings import EmbeddingProviderError
-from garden_center.llm import LLMGenerationResult, LLMProviderError, LLMTokenUsage
+from garden_center.ai.embeddings import EmbeddingProviderError
+from garden_center.ai.llm import (
+    LLMGenerationResult,
+    LLMProviderError,
+    LLMTokenUsage,
+)
 
 
 class FakeEmbeddingProvider:

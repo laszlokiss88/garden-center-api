@@ -9,8 +9,8 @@ from sqlalchemy import cast, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
-from garden_center.models import (
+from garden_center.ai.embeddings import EmbeddingProvider, EmbeddingProviderError
+from garden_center.database.models import (
     ChunkEmbedding,
     Document,
     DocumentChunk,

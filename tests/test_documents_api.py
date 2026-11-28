@@ -8,11 +8,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 
-from garden_center.config import get_settings
-from garden_center.database import async_session_factory
-from garden_center.dependencies import get_embedding_provider
+from garden_center.api.dependencies import get_embedding_provider
+from garden_center.core.config import get_settings
+from garden_center.database.engine import async_session_factory
+from garden_center.database.models import ChunkEmbedding, Document, DocumentChunk
 from garden_center.main import app
-from garden_center.models import ChunkEmbedding, Document, DocumentChunk
 from tests.fakes import FailingEmbeddingProvider, FakeEmbeddingProvider
 from tests.pdf_factory import make_pdf
 
@@ -73,7 +73,7 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete(
                 raise AssertionError("Duplicate PDF must not be processed")
 
             monkeypatch.setattr(
-                "garden_center.document_service._process_document", fail_processing
+                "garden_center.documents.service._process_document", fail_processing
             )
             duplicate = await client.post(
                 "/api/v1/documents",
@@ -111,6 +111,12 @@ def test_document_upload_retrieval_duplicate_and_cascade_delete(
                 "/api/v1/documents", params={"limit": 101, "offset": -1}
             )
             assert invalid_page.status_code == 422
+            assert invalid_page.json() == {
+                "detail": {
+                    "code": "invalid_request",
+                    "message": "The request contains invalid or missing data.",
+                }
+            }
 
             detail = await client.get(f"/api/v1/documents/{document_id}")
             assert detail.status_code == 200

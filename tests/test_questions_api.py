@@ -18,15 +18,15 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 )
 from opentelemetry.trace import StatusCode
 
-import garden_center.rag_service as rag_service
-from garden_center.dependencies import (
+import garden_center.rag.service as rag_service
+from garden_center.ai.llm import LLMGenerationResult
+from garden_center.api.dependencies import (
     get_embedding_provider,
     get_llm_provider,
 )
-from garden_center.llm import LLMGenerationResult
 from garden_center.main import app
-from garden_center.rag_service import _select_context_results
-from garden_center.search_service import SearchResult
+from garden_center.rag.search import SearchResult
+from garden_center.rag.service import _select_context_results
 from tests.fakes import FailingLLMProvider, FakeEmbeddingProvider, FakeLLMProvider
 
 
@@ -57,7 +57,7 @@ def _post_question(llm_provider: object, results: list[SearchResult]) -> Respons
         app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
         app.dependency_overrides[get_llm_provider] = lambda: llm_provider
         try:
-            with patch("garden_center.rag_service.semantic_search", fake_search):
+            with patch("garden_center.rag.service.semantic_search", fake_search):
                 transport = ASGITransport(app=app)
                 async with AsyncClient(
                     transport=transport, base_url="http://testserver"
@@ -118,6 +118,29 @@ def test_question_without_relevant_documents_skips_generation() -> None:
     assert response.json()["sources"] == []
     assert response.json()["provider"] is None
     assert provider.calls == 0
+
+
+def test_invalid_question_uses_standard_error_response() -> None:
+    async def scenario() -> Response:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.post(
+                "/api/v1/questions",
+                json={"question": "   "},
+            )
+
+    response = asyncio.run(scenario())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "invalid_request",
+            "message": "The request contains invalid or missing data.",
+        }
+    }
 
 
 def test_context_budget_excludes_oversized_chunks() -> None:
@@ -191,7 +214,7 @@ def test_shared_graph_keeps_concurrent_runtime_contexts_independent() -> None:
         llm_b = FakeLLMProvider()
         graph_id = id(rag_service._RAG_GRAPH)
 
-        with patch("garden_center.rag_service.semantic_search", fake_search):
+        with patch("garden_center.rag.service.semantic_search", fake_search):
             await asyncio.gather(
                 rag_service.answer_question(
                     session_a,  # type: ignore[arg-type]
@@ -335,7 +358,7 @@ def test_generation_capacity_rejects_without_queueing_and_releases_slot() -> Non
         app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
         app.dependency_overrides[get_llm_provider] = lambda: provider
         try:
-            with patch("garden_center.rag_service.semantic_search", fake_search):
+            with patch("garden_center.rag.service.semantic_search", fake_search):
                 async with AsyncClient(
                     transport=ASGITransport(app=app),
                     base_url="http://testserver",

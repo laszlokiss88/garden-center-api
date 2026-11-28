@@ -3,7 +3,7 @@
 import pytest
 import tiktoken
 
-from garden_center.document_processing import (
+from garden_center.documents.processing import (
     DocumentValidationError,
     ExtractedPage,
     chunk_pages,

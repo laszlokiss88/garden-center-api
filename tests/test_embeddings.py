@@ -8,15 +8,15 @@ from typing import NoReturn
 import httpx
 import pytest
 
-from garden_center.database import async_session_factory
-from garden_center.embeddings import EmbeddingProviderError, OllamaEmbeddingProvider
-from garden_center.models import (
+from garden_center.ai.embeddings import EmbeddingProviderError, OllamaEmbeddingProvider
+from garden_center.database.engine import async_session_factory
+from garden_center.database.models import (
     ChunkEmbedding,
     Document,
     DocumentChunk,
     ProcessingStatus,
 )
-from garden_center.search_service import semantic_search
+from garden_center.rag.search import semantic_search
 from tests.fakes import FakeEmbeddingProvider
 
 

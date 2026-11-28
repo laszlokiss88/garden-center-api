@@ -1,35 +1,30 @@
 """HTTP endpoint for grounded document question answering."""
 
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from garden_center.config import Settings, get_settings
-from garden_center.database import get_database_session
-from garden_center.dependencies import (
-    get_embedding_provider,
-    get_llm_provider,
+from garden_center.ai.embeddings import EmbeddingProviderError
+from garden_center.ai.llm import LLMProviderError
+from garden_center.api.dependencies import (
+    EmbeddingDependency,
+    LLMDependency,
+    SessionDependency,
+    SettingsDependency,
 )
-from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
-from garden_center.llm import LLMProvider, LLMProviderError
-from garden_center.rag_service import answer_question
-from garden_center.rate_limiting import limiter, questions_rate_limit
-from garden_center.schemas import (
+from garden_center.api.errors import api_error
+from garden_center.api.rate_limiting import limiter, questions_rate_limit
+from garden_center.api.schemas import (
     AnswerSourceResponse,
     ErrorResponse,
     QuestionRequest,
     QuestionResponse,
 )
+from garden_center.rag.service import answer_question
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["question-answering"])
-SessionDependency = Annotated[AsyncSession, Depends(get_database_session)]
-SettingsDependency = Annotated[Settings, Depends(get_settings)]
-EmbeddingDependency = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
-LLMDependency = Annotated[LLMProvider, Depends(get_llm_provider)]
 
 
 def _provider_error(exc: LLMProviderError) -> HTTPException:
@@ -41,10 +36,7 @@ def _provider_error(exc: LLMProviderError) -> HTTPException:
         else status.HTTP_503_SERVICE_UNAVAILABLE
     )
     logger.warning("Generation provider error [%s]: %s", exc.code, exc.message)
-    return HTTPException(
-        status_code=status_code,
-        detail={"code": exc.code, "message": exc.message},
-    )
+    return api_error(status_code, exc.code, exc.message)
 
 
 @router.post(
@@ -80,20 +72,17 @@ async def ask_question(
         )
     except EmbeddingProviderError as exc:
         logger.warning("Question retrieval failed [%s]: %s", exc.code, exc.message)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": exc.code, "message": exc.message},
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE, exc.code, exc.message
         ) from exc
     except LLMProviderError as exc:
         raise _provider_error(exc) from exc
     except SQLAlchemyError:
         logger.exception("Question retrieval failed")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "database_unavailable",
-                "message": "Question answering is temporarily unavailable.",
-            },
+        raise api_error(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "database_unavailable",
+            "Question answering is temporarily unavailable.",
         ) from None
 
     sources = [

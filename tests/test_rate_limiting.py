@@ -7,9 +7,9 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from garden_center.dependencies import get_embedding_provider, get_llm_provider
+from garden_center.api.dependencies import get_embedding_provider, get_llm_provider
+from garden_center.api.rate_limiting import limiter
 from garden_center.main import app
-from garden_center.rate_limiting import limiter
 from tests.fakes import FakeEmbeddingProvider, FakeLLMProvider
 
 
@@ -20,7 +20,9 @@ def reset_rate_limits(monkeypatch: pytest.MonkeyPatch) -> None:
         questions_rate_limit_per_minute=1,
         document_upload_rate_limit_per_minute=1,
     )
-    monkeypatch.setattr("garden_center.rate_limiting.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "garden_center.api.rate_limiting.get_settings", lambda: settings
+    )
 
 
 def test_question_rate_limit_returns_429() -> None:
@@ -31,7 +33,7 @@ def test_question_rate_limit_returns_429() -> None:
         app.dependency_overrides[get_embedding_provider] = FakeEmbeddingProvider
         app.dependency_overrides[get_llm_provider] = FakeLLMProvider
         try:
-            with patch("garden_center.rag_service.semantic_search", no_results):
+            with patch("garden_center.rag.service.semantic_search", no_results):
                 async with AsyncClient(
                     transport=ASGITransport(app=app),
                     base_url="http://testserver",

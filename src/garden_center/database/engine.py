@@ -1,6 +1,6 @@
 """Reusable asynchronous SQLAlchemy infrastructure."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from garden_center.config import get_settings
-from garden_center.models import Base
+from garden_center.core.config import get_settings
+from garden_center.database.models import Base
 
 __all__ = ["Base", "get_database_session"]
 
@@ -22,7 +22,7 @@ engine: AsyncEngine = create_async_engine(
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def get_database_session() -> AsyncIterator[AsyncSession]:
+async def get_database_session() -> AsyncGenerator[AsyncSession]:
     """Yield a database session and always close it afterward."""
     async with async_session_factory() as session:
         yield session

@@ -6,13 +6,13 @@ import json
 import httpx
 import pytest
 
-from garden_center.concurrency import llm_generation_slot
-from garden_center.llm import (
+from garden_center.ai.llm import (
     SYSTEM_PROMPT,
     AnthropicLLMProvider,
     LLMProviderError,
     OllamaLLMProvider,
 )
+from garden_center.core.concurrency import acquire_llm_generation_slot
 
 
 def test_anthropic_uses_native_system_prompt() -> None:
@@ -155,19 +155,19 @@ def test_provider_concurrency_configuration_controls_capacity() -> None:
         release = asyncio.Event()
 
         async def hold_ollama_slot() -> None:
-            async with llm_generation_slot(ollama):
+            async with acquire_llm_generation_slot(ollama):
                 acquired.set()
                 await release.wait()
 
         task = asyncio.create_task(hold_ollama_slot())
         try:
-            async with llm_generation_slot(anthropic):
-                async with llm_generation_slot(anthropic):
+            async with acquire_llm_generation_slot(anthropic):
+                async with acquire_llm_generation_slot(anthropic):
                     pass
 
             await asyncio.wait_for(acquired.wait(), timeout=1)
             with pytest.raises(LLMProviderError) as error:
-                async with llm_generation_slot(ollama):
+                async with acquire_llm_generation_slot(ollama):
                     pass
             assert error.value.code == "generation_capacity_unavailable"
         finally:

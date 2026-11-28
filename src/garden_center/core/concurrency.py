@@ -1,11 +1,11 @@
 """Process-local concurrency controls for expensive provider operations."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from anyio import CapacityLimiter, WouldBlock
 
-from garden_center.llm import LLMProvider, LLMProviderError
+from garden_center.ai.llm import LLMProvider, LLMProviderError
 
 _LIMITERS: dict[tuple[str, str, int], CapacityLimiter] = {}
 
@@ -23,7 +23,7 @@ def _limiter_for(provider: LLMProvider) -> CapacityLimiter | None:
 
 
 @asynccontextmanager
-async def llm_generation_slot(provider: LLMProvider) -> AsyncIterator[None]:
+async def acquire_llm_generation_slot(provider: LLMProvider) -> AsyncGenerator[None]:
     """Acquire generation capacity immediately or reject without queueing."""
     limiter = _limiter_for(provider)
     if limiter is None:

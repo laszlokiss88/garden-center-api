@@ -11,15 +11,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from garden_center.config import Settings
-from garden_center.document_processing import (
+from garden_center.core.config import Settings
+from garden_center.database.models import Document, DocumentChunk, ProcessingStatus
+from garden_center.documents.processing import (
     PDF_CONTENT_TYPE,
     chunk_pages,
     extract_pdf_pages,
     validate_upload,
 )
-from garden_center.file_storage import FileStorage
-from garden_center.models import Document, DocumentChunk, ProcessingStatus
+from garden_center.storage.file_storage import FileStorage
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ async def create_document(
         raise
     except Exception:
         await session.rollback()
+        await _delete_after_failed_persistence(storage, document.storage_key)
         raise
 
     await session.refresh(document)

@@ -47,4 +47,9 @@ def test_ready_when_database_is_unavailable(
     response = _request("/ready")
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Database unavailable"}
+    assert response.json() == {
+        "detail": {
+            "code": "database_unavailable",
+            "message": "Database unavailable.",
+        }
+    }

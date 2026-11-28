@@ -6,6 +6,8 @@ from typing import Protocol
 
 import httpx
 
+from garden_center.ai.types import LLMProviderName
+
 SYSTEM_PROMPT = (
     "Answer using only the provided document excerpts. "
     "Provide a clean, natural-language answer without source labels or citations. "
@@ -67,7 +69,7 @@ def _usage_value(value: object) -> int | None:
 class AnthropicLLMProvider:
     """Generate answers through Anthropic's Messages API."""
 
-    provider_name = "anthropic"
+    provider_name = LLMProviderName.ANTHROPIC
 
     def __init__(
         self,
@@ -182,7 +184,7 @@ class AnthropicLLMProvider:
 class OllamaLLMProvider:
     """Generate answers with a local Ollama model."""
 
-    provider_name = "ollama"
+    provider_name = LLMProviderName.OLLAMA
 
     def __init__(
         self,

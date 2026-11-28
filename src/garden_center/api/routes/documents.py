@@ -6,9 +6,7 @@ from typing import Annotated
 
 from fastapi import (
     APIRouter,
-    Depends,
     File,
-    HTTPException,
     Query,
     Request,
     Response,
@@ -18,44 +16,37 @@ from fastapi import (
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from garden_center.config import Settings, get_settings
-from garden_center.database import get_database_session
-from garden_center.dependencies import get_embedding_provider, get_file_storage
-from garden_center.document_processing import DocumentValidationError
-from garden_center.document_service import (
-    DuplicateDocumentError,
-    create_document,
-    delete_document,
-    get_document,
-    list_documents,
+from garden_center.ai.embeddings import EmbeddingProviderError
+from garden_center.api.dependencies import (
+    EmbeddingDependency,
+    SessionDependency,
+    SettingsDependency,
+    StorageDependency,
 )
-from garden_center.embeddings import EmbeddingProvider, EmbeddingProviderError
-from garden_center.file_storage import FileStorage
-from garden_center.models import Document
-from garden_center.rate_limiting import document_upload_rate_limit, limiter
-from garden_center.schemas import (
+from garden_center.api.errors import api_error
+from garden_center.api.rate_limiting import document_upload_rate_limit, limiter
+from garden_center.api.schemas import (
     DocumentChunkResponse,
     DocumentDetailResponse,
     DocumentListResponse,
     DocumentResponse,
     ErrorResponse,
 )
-from garden_center.search_service import index_document_chunks
+from garden_center.database.models import Document
+from garden_center.documents.processing import DocumentValidationError
+from garden_center.documents.service import (
+    DuplicateDocumentError,
+    create_document,
+    delete_document,
+    get_document,
+    list_documents,
+)
+from garden_center.rag.search import index_document_chunks
+from garden_center.storage.file_storage import FileStorage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
 _DOCUMENT_STORAGE_ERRORS = (SQLAlchemyError, OSError)
-SessionDependency = Annotated[AsyncSession, Depends(get_database_session)]
-SettingsDependency = Annotated[Settings, Depends(get_settings)]
-ProviderDependency = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
-StorageDependency = Annotated[FileStorage, Depends(get_file_storage)]
-
-
-def _error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status_code,
-        detail={"code": code, "message": message},
-    )
 
 
 def _document_response(
@@ -96,7 +87,7 @@ async def _cleanup_failed_upload(
             await delete_document(session, document, storage)
     except SQLAlchemyError:
         logger.exception("Could not clean up failed document %s", document_id)
-        raise _error(
+        raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "The failed document could not be cleaned up.",
@@ -119,7 +110,7 @@ async def upload_document(
     request: Request,
     session: SessionDependency,
     settings: SettingsDependency,
-    provider: ProviderDependency,
+    provider: EmbeddingDependency,
     storage: StorageDependency,
     response: Response,
     file: Annotated[UploadFile, File(description="PDF document")],
@@ -130,14 +121,14 @@ async def upload_document(
             document = await create_document(session, file, settings, storage)
             document_id = document.id
         except DocumentValidationError as exc:
-            raise _error(status.HTTP_400_BAD_REQUEST, exc.code, exc.message) from exc
+            raise api_error(status.HTTP_400_BAD_REQUEST, exc.code, exc.message) from exc
         except DuplicateDocumentError as exc:
-            raise _error(
+            raise api_error(
                 status.HTTP_409_CONFLICT, "duplicate_document", str(exc)
             ) from exc
         except _DOCUMENT_STORAGE_ERRORS:
             logger.exception("Document upload failed")
-            raise _error(
+            raise api_error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "document_storage_unavailable",
                 "The document could not be stored.",
@@ -157,7 +148,7 @@ async def upload_document(
         except EmbeddingProviderError as exc:
             logger.warning("Document %s indexing failed: %s", document_id, exc.code)
             await _cleanup_failed_upload(session, document_id, storage)
-            raise _error(
+            raise api_error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 exc.code,
                 exc.message,
@@ -165,7 +156,7 @@ async def upload_document(
         except SQLAlchemyError:
             logger.exception("Document %s embedding persistence failed", document_id)
             await _cleanup_failed_upload(session, document_id, storage)
-            raise _error(
+            raise api_error(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "database_unavailable",
                 "Document embeddings could not be persisted.",
@@ -187,7 +178,7 @@ async def get_documents(
         documents, total = await list_documents(session, limit, offset)
     except SQLAlchemyError:
         logger.exception("Could not list documents")
-        raise _error(
+        raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "Documents are temporarily unavailable.",
@@ -216,13 +207,13 @@ async def get_document_detail(
         document = await get_document(session, document_id)
     except SQLAlchemyError:
         logger.exception("Could not load document %s", document_id)
-        raise _error(
+        raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "The document is temporarily unavailable.",
         ) from None
     if document is None:
-        raise _error(status.HTTP_404_NOT_FOUND, "document_not_found", "Not found.")
+        raise api_error(status.HTTP_404_NOT_FOUND, "document_not_found", "Not found.")
     return _document_detail(document)
 
 
@@ -237,18 +228,18 @@ async def remove_document(
         document = await get_document(session, document_id)
     except SQLAlchemyError:
         logger.exception("Could not load document %s for deletion", document_id)
-        raise _error(
+        raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "The document could not be deleted.",
         ) from None
     if document is None:
-        raise _error(status.HTTP_404_NOT_FOUND, "document_not_found", "Not found.")
+        raise api_error(status.HTTP_404_NOT_FOUND, "document_not_found", "Not found.")
     try:
         await delete_document(session, document, storage)
     except SQLAlchemyError:
         logger.exception("Could not delete document %s", document_id)
-        raise _error(
+        raise api_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "database_unavailable",
             "The document could not be deleted.",
